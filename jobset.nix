@@ -25,11 +25,12 @@ let
   nixpkgsArgs = {
     config = {
       # TODO: why not simply "allowUnfree = true"?
-      allowUnfreePredicate =
-        let
-          cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-        in
-        cudaLib.allowUnfreeCudaPredicate;
+      # allowUnfreePredicate =
+      #   let
+      #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
+      #   in
+      #   cudaLib.allowUnfreeCudaPredicate;
+      allowUnfree = true;
       cudaSupport = true;
       inHydra = true;
 
@@ -92,19 +93,53 @@ let
   #   python3Packages.torch = linux;
   # };
 
-  allPackagePlatforms = lib.foldlAttrs (
-    acc: system:
-    let
-      foldPaths = lib.foldl (
-        acc: str:
-        let
-          res = lib.setAttrByPath (lib.splitString "." str) system;
-        in
-        lib.recursiveUpdate acc res
-      );
-    in
-    foldPaths acc
-  ) { } rebuildsByPlatform;
+  # allPackagePlatforms = lib.foldlAttrs (
+  #   acc: system:
+  #   let
+  #     foldPaths = lib.foldl (
+  #       acc: str:
+  #       let
+  #         res = lib.setAttrByPath (lib.splitString "." str) system;
+  #       in
+  #       lib.recursiveUpdate acc res
+  #     );
+  #   in
+  #   foldPaths acc
+  # ) { } rebuildsByPlatform;
+
+  toEntries =
+    x:
+    lib.concatLists (
+      lib.mapAttrsToList (
+        system:
+        map (pathStr: {
+          inherit system;
+          path = lib.splitString "." pathStr;
+        })
+      ) x
+    );
+
+  groupEntries = lib.groupBy (entry: lib.head entry.path);
+
+  entriesToAttrSet =
+    entries:
+    lib.mapAttrs (
+      _: entries:
+      let
+        byLeaf = lib.partition (entry: lib.length entry.path == 1) entries;
+      in
+      if byLeaf.wrong == [ ] then
+        # leaf node
+        assert byLeaf.wrong == [ ];
+        assert lib.all (entry: entry.path == (lib.head entries).path) entries;
+        lib.catAttrs "system" entries
+      else
+        # recursive
+        assert byLeaf.right == [ ];
+        entriesToAttrSet (map (entry: entry // { path = lib.tail entry.path; }) entries)
+    ) (groupEntries entries);
+
+  allPackagePlatforms = entriesToAttrSet (toEntries rebuildsByPlatform);
 
   # We need to go from
   # rebuildsByPlatform = {
