@@ -1,18 +1,35 @@
 {
-  # The platforms for which we build Nixpkgs.
+  # The platforms supported by the NixOS-CUDA Hydra instance
   supportedSystems ? [
     "x86_64-linux"
     # "aarch64-linux"
   ],
+  # The system evaluating this expression
+  # TODO: automatically detect?
+  currentSystem ? "x86_64-linux",
 
+  # The nixpkgs instance
   nixpkgs,
+  ...
+}@args:
+
+let
+  ##########################################################
+  # STEP 1: Initialize release-lib
+  ##########################################################
+
+  lib = import "${nixpkgs}/lib";
+  mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
 
   # Attributes passed to nixpkgs.
-  cudaLib ? (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib,
-  nixpkgsArgs ? {
+  nixpkgsArgs = {
     config = {
-      # TODO
-      allowUnfreePredicate = cudaLib.allowUnfreeCudaPredicate;
+      # TODO: why not simply "allowUnfree = true"?
+      allowUnfreePredicate =
+        let
+          cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
+        in
+        cudaLib.allowUnfreeCudaPredicate;
       cudaSupport = true;
       inHydra = true;
 
@@ -21,43 +38,52 @@
     };
 
     __allowFileset = false;
-  },
-  ...
-}@args:
+  };
 
-let
-  # TODO
-  system = "x86_64-linux";
-
-  lib = import "${nixpkgs}/lib";
-  # cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-  # evalResult = builtins.fromJSON (
-  #   import ./generate-jobset.nix {
-  #     inherit system evalSystems;
-  #     inherit (packageSet) callPackage;
-  #   }
-  # );
-  mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
   release-lib = mkReleaseLib (
     {
-      inherit supportedSystems nixpkgsArgs system;
+      inherit supportedSystems nixpkgsArgs;
+      system = currentSystem;
     }
     // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
   );
 
-  inherit (release-lib)
-    linux
-    mapTestOn
-    packagePlatforms
-    pkgs
-    ;
+  ##########################################################
+  # STEP 2: Compute the set of attrpaths in nixpkgs that are affected by switching cudaSupport from
+  # `false` to `true`
+  ##########################################################
 
-  evalResultOut = import ./generate-jobset.nix {
-    inherit pkgs nixpkgs;
-    evalSystems = supportedSystems;
+  ci = import "${nixpkgs}/ci" {
+    system = currentSystem;
+    inherit nixpkgs;
   };
 
-  inherit (lib.importJSON evalResultOut) rebuildsByPlatform;
+  evalCudaSupportFalse =
+    (ci.eval {
+      extraNixpkgsConfig = {
+        allowUnfree = true;
+        cudaSupport = false;
+      };
+    }).baseline
+      { evalSystems = supportedSystems; };
+
+  evalComparison =
+    (ci.eval {
+      extraNixpkgsConfig = {
+        allowUnfree = true;
+        cudaSupport = true;
+      };
+    }).full
+      {
+        baseline = evalCudaSupportFalse;
+        evalSystems = supportedSystems;
+      };
+
+  inherit (lib.importJSON "${evalComparison}/changed-paths.json") rebuildsByPlatform;
+
+  ##########################################################
+  # STEP 3: Build the jobset that will be consumed by Hydra
+  ##########################################################
 
   # Previous manual mapping declared in pkgs/top-level/release-cuda.nix
   # allPackagePlatforms = {
@@ -104,9 +130,7 @@ let
 
   # Explicitly specified platforms take precedence over the platforms
   # automatically inferred in autoPackagePlatforms
-  jobs = mapTestOn allPackagePlatforms;
+  jobs = release-lib.mapTestOn allPackagePlatforms;
 in
-lib.generators.toPretty { } jobs
-# lib.generators.toPretty { } rebuildsByPlatform
-# rebuildsJSON
-# allPackagePlatforms
+# jobs
+lib.generators.toPretty { } jobs # TODO: FOR DEBUG PURPOSES
