@@ -1,11 +1,13 @@
 {
-  system,
-  runCommand,
+  pkgs,
   nixpkgs,
-  evalSystems ? [ "x86_64-linux" ],
+  evalSystems, # ? [ "x86_64-linux" ],
 }:
 let
-  ci = import "${nixpkgs}/ci" { inherit system nixpkgs; };
+  ci = import "${nixpkgs}/ci" {
+    inherit nixpkgs;
+    inherit (pkgs.stdenv.hostPlatform) system;
+  };
 
   withoutCuda =
     (ci.eval {
@@ -30,6 +32,6 @@ let
         inherit evalSystems;
       };
 in
-runCommand "extract-json" { } ''
+pkgs.runCommand "extract-json" { } ''
   cp ${withCuda}/changed-paths.json $out
 ''

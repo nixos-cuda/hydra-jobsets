@@ -24,6 +24,9 @@
         "aarch64-darwin"
       ];
 
+      flake.jobset = import ./jobset.nix {
+        inherit nixpkgs;
+      };
       perSystem =
         { pkgs, system, ... }:
         {
