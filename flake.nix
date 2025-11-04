@@ -2,7 +2,7 @@
   description = "CUDA Hydra jobset generator";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable-small";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable-small";
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";
@@ -24,6 +24,9 @@
         "aarch64-darwin"
       ];
 
+      flake.jobset = import ./jobset.nix {
+        inherit nixpkgs;
+      };
       perSystem =
         { pkgs, system, ... }:
         {
