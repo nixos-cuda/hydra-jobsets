@@ -24,13 +24,8 @@
         "aarch64-darwin"
       ];
 
-      flake.jobset = import ./jobset.nix {
-        inherit nixpkgs;
+      flake.jobsets = {
+        cuda-packages = import ./cuda-packages.nix { inherit nixpkgs; };
       };
-      perSystem =
-        { pkgs, system, ... }:
-        {
-          packages.default = pkgs.callPackage ./generate-jobset.nix { inherit nixpkgs system; };
-        };
     };
 }
