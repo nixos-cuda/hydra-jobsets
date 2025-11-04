@@ -21,23 +21,24 @@ let
   lib = import "${nixpkgs}/lib";
   mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
 
+  nixpkgsConfig = {
+    # TODO: why not simply "allowUnfree = true"?
+    # allowUnfreePredicate =
+    #   let
+    #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
+    #   in
+    #   cudaLib.allowUnfreeCudaPredicate;
+    allowUnfree = true;
+    cudaSupport = true;
+    inHydra = true;
+
+    # Don't evaluate duplicate and/or deprecated attributes
+    allowAliases = false;
+  };
+
   # Attributes passed to nixpkgs.
   nixpkgsArgs = {
-    config = {
-      # TODO: why not simply "allowUnfree = true"?
-      # allowUnfreePredicate =
-      #   let
-      #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-      #   in
-      #   cudaLib.allowUnfreeCudaPredicate;
-      allowUnfree = true;
-      cudaSupport = true;
-      inHydra = true;
-
-      # Don't evaluate duplicate and/or deprecated attributes
-      allowAliases = false;
-    };
-
+    config = nixpkgsConfig;
     __allowFileset = false;
   };
 
@@ -61,8 +62,7 @@ let
 
   evalCudaSupportFalse =
     (ci.eval {
-      extraNixpkgsConfig = {
-        allowUnfree = true;
+      extraNixpkgsConfig = nixpkgsConfig // {
         cudaSupport = false;
       };
     }).baseline
@@ -70,10 +70,7 @@ let
 
   evalComparison =
     (ci.eval {
-      extraNixpkgsConfig = {
-        allowUnfree = true;
-        cudaSupport = true;
-      };
+      extraNixpkgsConfig = nixpkgsConfig;
     }).full
       {
         baseline = evalCudaSupportFalse;
@@ -86,62 +83,8 @@ let
   # STEP 3: Build the jobset that will be consumed by Hydra
   ##########################################################
 
-  # Previous manual mapping declared in pkgs/top-level/release-cuda.nix
-  # allPackagePlatforms = {
-  #   blas = linux;
-  #   blender = linux;
-  #   python3Packages.torch = linux;
-  # };
-
-  # allPackagePlatforms = lib.foldlAttrs (
-  #   acc: system:
-  #   let
-  #     foldPaths = lib.foldl (
-  #       acc: str:
-  #       let
-  #         res = lib.setAttrByPath (lib.splitString "." str) system;
-  #       in
-  #       lib.recursiveUpdate acc res
-  #     );
-  #   in
-  #   foldPaths acc
-  # ) { } rebuildsByPlatform;
-
-  toEntries =
-    x:
-    lib.concatLists (
-      lib.mapAttrsToList (
-        system:
-        map (pathStr: {
-          inherit system;
-          path = lib.splitString "." pathStr;
-        })
-      ) x
-    );
-
-  groupEntries = lib.groupBy (entry: lib.head entry.path);
-
-  entriesToAttrSet =
-    entries:
-    lib.mapAttrs (
-      _: entries:
-      let
-        byLeaf = lib.partition (entry: lib.length entry.path == 1) entries;
-      in
-      if byLeaf.wrong == [ ] then
-        # leaf node
-        assert byLeaf.wrong == [ ];
-        assert lib.all (entry: entry.path == (lib.head entries).path) entries;
-        lib.catAttrs "system" entries
-      else
-        # recursive
-        assert byLeaf.right == [ ];
-        entriesToAttrSet (map (entry: entry // { path = lib.tail entry.path; }) entries)
-    ) (groupEntries entries);
-
-  allPackagePlatforms = entriesToAttrSet (toEntries rebuildsByPlatform);
-
-  # We need to go from
+  # First, we need to map
+  #
   # rebuildsByPlatform = {
   #   "x86_64-linux" = [
   #     "python3Packages.torch"
@@ -154,14 +97,57 @@ let
   #     "cool"
   #   ];
   # }
+  #
   # to:
-  # {
+  #
+  # allPackagePlatforms = {
   #   python3Packages.torch = [ "x86_64-linux" "aarch64-linux" ];
   #   python3Packages.foo = [ "x86_64-linux" ];
   #   python3Packages.bar = [ "aarch64-linux" ];
   #   cool = [ "x86_64-linux" "aarch64-linux" ];
   # }
-  # Then, we can feed this to mapTestOn
+  #
+  # thanks to some nix magic by @MattSturgeon (thanks!)
+
+  toEntries =
+    x:
+    lib.pipe x [
+      (lib.mapAttrs (
+        system:
+        map (pathStr: {
+          inherit system;
+          path = lib.splitString "." pathStr;
+        })
+      ))
+      lib.attrValues
+      lib.concatLists
+    ];
+
+  groupEntries =
+    entries:
+    lib.pipe entries [
+      (lib.groupBy (entry: lib.head entry.path))
+      (lib.mapAttrs (_: map (entry: entry // { path = lib.tail entry.path; })))
+    ];
+
+  entriesToAttrSet =
+    entries:
+    lib.mapAttrs (
+      _: entries:
+      let
+        byLeaf = lib.partition (entry: entry.path == [ ]) entries;
+      in
+      if byLeaf.wrong == [ ] then
+        # leaf node
+        lib.catAttrs "system" entries
+      else if byLeaf.right == [ ] then
+        # recursive
+        entriesToAttrSet entries
+      else
+        throw "Conflicting attr paths:${lib.concatMapStrings (entry: "\n- ${entry.path}") entries}"
+    ) (groupEntries entries);
+
+  allPackagePlatforms = entriesToAttrSet (toEntries rebuildsByPlatform);
 
   # Explicitly specified platforms take precedence over the platforms
   # automatically inferred in autoPackagePlatforms
