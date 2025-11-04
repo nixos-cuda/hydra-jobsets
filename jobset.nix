@@ -6,7 +6,7 @@
   ],
   # The system evaluating this expression
   # TODO: automatically detect?
-  currentSystem ? "x86_64-linux",
+  currentSystem ? builtins.currentSystem or "x86_64-linux",
 
   # The nixpkgs instance
   nixpkgs,
@@ -63,7 +63,6 @@ let
   # TODO: optimize the value of chunkSize for the hydra machine
   evalCudaSupportFalse =
     (ci.eval {
-      includeInsecure = false;
       extraNixpkgsConfig = nixpkgsConfig // {
         cudaSupport = false;
       };
@@ -72,7 +71,6 @@ let
 
   evalComparison =
     (ci.eval {
-      includeInsecure = false;
       extraNixpkgsConfig = nixpkgsConfig;
     }).full
       {
@@ -156,6 +154,4 @@ let
   # automatically inferred in autoPackagePlatforms
   jobs = release-lib.mapTestOn allPackagePlatforms;
 in
-# jobs
-lib.generators.toPretty { } jobs # TODO: FOR DEBUG PURPOSES
-# "${evalComparison}/changed-paths.json"
+jobs
