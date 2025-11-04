@@ -60,8 +60,10 @@ let
     inherit nixpkgs;
   };
 
+  # TODO: optimize the value of chunkSize for the hydra machine
   evalCudaSupportFalse =
     (ci.eval {
+      includeInsecure = false;
       extraNixpkgsConfig = nixpkgsConfig // {
         cudaSupport = false;
       };
@@ -70,6 +72,7 @@ let
 
   evalComparison =
     (ci.eval {
+      includeInsecure = false;
       extraNixpkgsConfig = nixpkgsConfig;
     }).full
       {
@@ -155,3 +158,4 @@ let
 in
 # jobs
 lib.generators.toPretty { } jobs # TODO: FOR DEBUG PURPOSES
+# "${evalComparison}/changed-paths.json"
