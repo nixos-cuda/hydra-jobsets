@@ -26,6 +26,7 @@
 
       flake.jobsets = {
         cuda-packages = import ./cuda-packages.nix { inherit nixpkgs; };
+        cuda-tests = import ./cuda-tests.nix { inherit nixpkgs; };
       };
     };
 }
