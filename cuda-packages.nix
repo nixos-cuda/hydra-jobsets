@@ -61,45 +61,89 @@ let
   };
 
   # TODO: optimize the value of chunkSize for the hydra machine
-  evalCudaSupportFalse =
-    (ci.eval {
-      extraNixpkgsConfig = nixpkgsConfig // {
-        cudaSupport = false;
-      };
-    }).baseline
-      { evalSystems = supportedSystems; };
+  evalCudaSupportFalse = ci.eval {
+    extraNixpkgsConfig = nixpkgsConfig // {
+      cudaSupport = false;
+    };
+  };
+  evalCudaSupportTrue = ci.eval { extraNixpkgsConfig = nixpkgsConfig; };
 
-  evalComparison =
-    (ci.eval {
-      extraNixpkgsConfig = nixpkgsConfig;
-    }).full
-      {
-        baseline = evalCudaSupportFalse;
-        evalSystems = supportedSystems;
-      };
+  # These produce a symlink tree like this:
+  # - x86_64-linux
+  #   - paths.json
+  #   - <other uninteresting stuff>
+  # - aarch64-linux
+  #   - paths.json
+  #   - ...
+  #
+  # Where paths.json looks like this:
+  #
+  # {
+  #   "AMB-plugins.x86_64-linux": {
+  #     "out": "/nix/store/1kfkni7mvz0ak3pkgq38axy6qwfp2kdz-AMB-plugins-0.8.1"
+  #   },
+  #   "ArchiSteamFarm.x86_64-linux": {
+  #     "out": "/nix/store/8lj39bhsxs6hl5whdv6qz280xz71v9i2-ArchiSteamFarm-6.3.1.4"
+  #   },
+  #   "CuboCore.coreaction.x86_64-linux": {
+  #     "out": "/nix/store/zw4wdd4s0qaw24hysqvj1zr150pfr2y9-coreaction-5.0.0"
+  #   },
+  #   "CuboCore.corearchiver.x86_64-linux": {
+  #     "out": "/nix/store/nlr70m9iympiaqzwy07wbpcyh2hkzdc0-corearchiver-5.0.0"
+  #   },
+  #   ...
+  # }
 
-  inherit (lib.importJSON "${evalComparison}/changed-paths.json") rebuildsByPlatform;
+  baselineCudaSupportFalse = evalCudaSupportFalse.baseline { evalSystems = supportedSystems; };
+  baselineCudaSupportTrue = evalCudaSupportTrue.baseline { evalSystems = supportedSystems; };
+
+  # Taken from ci/eval/diff.nix
+  getAttrs =
+    dir: evalSystem:
+    let
+      raw = builtins.readFile "${dir}/${evalSystem}/paths.json";
+      # The file contains Nix paths; we need to ignore them for evaluation purposes,
+      # else there will be a "is not allowed to refer to a store path" error.
+      data = builtins.unsafeDiscardStringContext raw;
+    in
+    builtins.fromJSON data;
+
+  # Collect all paths that changed between these into a form of a list:
+  # [
+  #   {system = "x86_64-linux"; path = ["csxcad"];}
+  #   {system = "x86_64-linux"; path = ["ctranslate2"];}
+  #   {system = "x86_64-linux"; path = ["cudaPackages" "libcublasmp"];}
+  #   {system = "x86_64-linux"; path = ["cudaPackages" "libcudss"];}
+  #   {system = "x86_64-linux"; path = ["cudaPackages" "libnvshmem"];}
+  #   {system = "x86_64-linux"; path = ["cudaPackages" "nsight_systems"];}
+  #   {system = "x86_64-linux"; path = ["cura-appimage"];}
+  #   ...
+  # ]
+
+  entries = lib.concatLists (
+    lib.forEach supportedSystems (
+      system:
+      let
+        before = getAttrs baselineCudaSupportFalse system;
+        after = getAttrs baselineCudaSupportTrue system;
+        isAddedOrChanged = name: !(before ? ${name}) || (after.${name} != before.${name});
+        addedOrChanged = lib.filter isAddedOrChanged (lib.attrNames after);
+      in
+      # Cut out "release-checks"
+      lib.filter (e: e.path != [ ]) (
+        map (pathStr: {
+          inherit system;
+          path = lib.init (lib.splitString "." pathStr);
+        }) addedOrChanged
+      )
+    )
+  );
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
   ##########################################################
 
-  # First, we need to map
-  #
-  # rebuildsByPlatform = {
-  #   "x86_64-linux" = [
-  #     "python3Packages.torch"
-  #     "python3Packages.foo"
-  #     "cool"
-  #   ];
-  #   "aarch64-linux" = [
-  #     "python3Packages.torch"
-  #     "python3Packages.bar"
-  #     "cool"
-  #   ];
-  # }
-  #
-  # to:
+  # First, we need to map it to:
   #
   # allPackagePlatforms = {
   #   python3Packages.torch = [ "x86_64-linux" "aarch64-linux" ];
@@ -109,20 +153,6 @@ let
   # }
   #
   # thanks to some nix magic by @MattSturgeon (thanks!)
-
-  toEntries =
-    x:
-    lib.pipe x [
-      (lib.mapAttrs (
-        system:
-        map (pathStr: {
-          inherit system;
-          path = lib.splitString "." pathStr;
-        })
-      ))
-      lib.attrValues
-      lib.concatLists
-    ];
 
   groupEntries =
     entries:
@@ -148,7 +178,7 @@ let
         throw "Conflicting attr paths:${lib.concatMapStrings (entry: "\n- ${entry.path}") entries}"
     ) (groupEntries entries);
 
-  allPackagePlatforms = entriesToAttrSet (toEntries rebuildsByPlatform);
+  allPackagePlatforms = entriesToAttrSet entries;
 
   # Explicitly specified platforms take precedence over the platforms
   # automatically inferred in autoPackagePlatforms
