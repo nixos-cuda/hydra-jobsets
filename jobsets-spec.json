@@ -1,0 +1,16 @@
+{
+    "enabled": 1,
+    "hidden": false,
+    "description": "Jobset that generates other jobsets",
+    "checkinterval": 300,
+    "schedulingshares": 1,
+    "nixexprinput": "declInput",
+    "nixexprpath": "jobsets.nix",
+    "keepnr": 10,
+    "inputs": {
+        "nixpkgs": {
+            "type": "git",
+            "value": "https://github.com/NixOS/nixpkgs.git nixos-unstable-small"
+        }
+    }
+}
