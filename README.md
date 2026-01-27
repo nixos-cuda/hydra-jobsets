@@ -25,9 +25,9 @@ The corresponding upstream nixpkgs channels used are
   [NixOS-CUDA binary cache](https://cache.nixos-cuda.org/).\
   This binary cache is intended to be used for internal development purposes only.
 
-### CUDA tests
+### CUDA GPU checks
 
-- **jobsets:** `cuda-tests-[un]stable`
+- **jobsets:** `cuda-gpu-checks-[un]stable`
 - **definition file:** [./jobsets/cuda-tests.nix](./jobsets/cuda-tests.nix)
 - **Content:** All `<package>.*.gpuCheck` instances.\
   `.gpuCheck` package attributes are in-derivation tests that require access to
