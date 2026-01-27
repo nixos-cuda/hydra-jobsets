@@ -7,12 +7,13 @@ let
     keepnr = 1;
     emailoverride = "";
   };
+  jobsetDir = "./jobsets";
   projects = {
     nixos-cuda = {
       cuda-gpu-checks-unstable = defaults // {
         description = "Run GPU Tests";
         nixexprinput = "jobsets";
-        nixexprpath = "cuda-tests.nix";
+        nixexprpath = "${jobsetDir}/cuda-tests.nix";
         keepnr = 0;
         inputs = {
           jobsets = {
@@ -28,7 +29,7 @@ let
       cuda-gpu-checks-stable = defaults // {
         description = "Run GPU Tests [STABLE]";
         nixexprinput = "jobsets";
-        nixexprpath = "cuda-tests.nix";
+        nixexprpath = "${jobsetDir}/cuda-tests.nix";
         keepnr = 0;
         inputs = {
           jobsets = {
@@ -44,7 +45,7 @@ let
       cuda-packages-unstable = defaults // {
         description = "All (?) nixpkgs cudaSupport-sensitive packages";
         nixexprinput = "jobsets";
-        nixexprpath = "cuda-packages.nix";
+        nixexprpath = "${jobsetDir}/cuda-packages.nix";
         inputs = {
           nixpkgs = {
             type = "git";
@@ -59,7 +60,7 @@ let
       cuda-packages-stable = defaults // {
         description = "All (?) nixpkgs cudaSupport-sensitive packages [STABLE]";
         nixexprinput = "jobsets";
-        nixexprpath = "cuda-packages.nix";
+        nixexprpath = "${jobsetDir}/cuda-packages.nix";
         inputs = {
           nixpkgs = {
             value = "https://github.com/NixOS/nixpkgs.git nixos-25.11-small";
