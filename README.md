@@ -9,6 +9,16 @@ All jobsets come in both an _unstable_ and a _stable_ flavor.
 The corresponding upstream nixpkgs channels used are
 `nixos-unstable-small` and `nixos-25.11-small`, respectively.
 
+## Declarative jobsets
+
+The jobsets configurations themselves are explicitly stored in this repo as well.
+Indeed, we use the [declarative projects](https://hydra.nixos.org/build/320151937/download/1/hydra/plugins/declarative-projects.html) feature of Hydra.
+
+- [`jobsets-spec.json`](./jobsets-spec.json) (the _declarative spec file_) configures the `.jobsets` jobset.
+- [`jobsets.nix`](./jobsets.nix) defines the `jobsets` job (part of the `.jobsets` jobset) which generates the other jobsets.
+
+The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on Hydra pulls those files to configure the jobsets.
+
 ## Jobsets
 
 ### CUDA packages
