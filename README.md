@@ -50,3 +50,12 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
   hardware-accelerated nixpkgs packages.\
   The role of this jobset is to run all of them in order to prevent spurious
   regressions.
+
+
+## Roadmap
+
+- [ ] Add channels
+    - [x] Create channel jobsets
+    - [ ] Publish/push/bump channels
+    - [ ] Ask nixpkgs-core team to have protected branches in `NixOS/nixpkgs` for our channels
+    - [ ] Make them 'official' channels

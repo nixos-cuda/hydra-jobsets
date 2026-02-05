@@ -27,6 +27,10 @@
       flake.jobsets = {
         cuda-packages = import ./jobsets/cuda-packages.nix { inherit nixpkgs; };
         cuda-tests = import ./jobsets/cuda-tests.nix { inherit nixpkgs; };
+        cuda-channel = import ./jobsets/cuda-channel.nix {
+          inherit nixpkgs;
+          channelName = "nixos-unstable-cuda";
+        };
       };
     };
 }

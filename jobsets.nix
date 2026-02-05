@@ -66,6 +66,18 @@ let
         definitionFile = "cuda-packages.nix";
         nixpkgsRelease = "25.11";
       };
+
+      # CHANNELS
+      channel-unstable = {
+        description = "Channel blockers";
+        definitionFile = "cuda-channel.nix";
+        nixpkgsRelease = "unstable";
+      };
+      "channel-25.11" = defaults // {
+        description = "Channel blockers";
+        definitionFile = "cuda-channel.nix";
+        nixpkgsRelease = "25.11";
+      };
     };
   };
 in
