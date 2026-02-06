@@ -72,7 +72,7 @@ let
       # CHANNELS
       channel-unstable = {
         description = "Channel blockers";
-        definitionFile = "cuda-channel.nix";
+        definitionFile = "cuda-channel/default.nix";
         nixpkgsRelease = "unstable";
         extraInputs.channelName = {
           type = "string";
@@ -81,7 +81,7 @@ let
       };
       "channel-25.11" = {
         description = "Channel blockers";
-        definitionFile = "cuda-channel.nix";
+        definitionFile = "cuda-channel/default.nix";
         nixpkgsRelease = "25.11";
         extraInputs.channelName = {
           type = "string";
