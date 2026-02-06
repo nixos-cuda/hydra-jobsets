@@ -73,7 +73,7 @@ let
         definitionFile = "cuda-channel.nix";
         nixpkgsRelease = "unstable";
       };
-      "channel-25.11" = defaults // {
+      "channel-25.11" = {
         description = "Channel blockers";
         definitionFile = "cuda-channel.nix";
         nixpkgsRelease = "25.11";
@@ -81,19 +81,4 @@ let
     };
   };
 in
-{
-  projectName,
-  declInput,
-  nixpkgs,
-}:
-let
-  pkgs = import nixpkgs { };
-in
-{
-  jobsets = (pkgs.writers.writeJSON "jobsets.json" projects.${projectName}).overrideAttrs {
-    # Pretty-print the output to logs
-    buildCommand = ''
-      jq -S . "$valuePath" | tee $out
-    '';
-  };
-}
+projects
