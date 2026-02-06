@@ -18,7 +18,7 @@ let
       type = "git";
       value = "https://github.com/NixOS/nixpkgs.git nixos-unstable-small";
     };
-    nixpkgs-stable = {
+    "nixpkgs-25.11" = {
       type = "git";
       value = "https://github.com/NixOS/nixpkgs.git nixos-25.11-small";
     };
@@ -28,7 +28,7 @@ let
   projects = {
     nixos-cuda = {
       cuda-gpu-checks-unstable = defaults // {
-        description = "Run GPU Tests";
+        description = "Run GPU Tests [nixos-unstable-small]";
         nixexprpath = "${jobsetDir}/cuda-tests.nix";
         keepnr = 0;
         inputs = {
@@ -36,29 +36,29 @@ let
           nixpkgs = inputs.nixpkgs-unstable;
         };
       };
-      cuda-gpu-checks-stable = defaults // {
-        description = "Run GPU Tests [STABLE]";
+      "cuda-gpu-checks-25.11" = defaults // {
+        description = "Run GPU Tests [nixos-25.11-small]";
         nixexprpath = "${jobsetDir}/cuda-tests.nix";
         keepnr = 0;
         inputs = {
           inherit (inputs) jobsets;
-          nixpkgs = inputs.nixpkgs-stable;
+          nixpkgs = inputs."nixpkgs-25.11";
         };
       };
       cuda-packages-unstable = defaults // {
-        description = "All (?) nixpkgs cudaSupport-sensitive packages";
+        description = "All (?) nixpkgs cudaSupport-sensitive packages [nixos-unstable-small]";
         nixexprpath = "${jobsetDir}/cuda-packages.nix";
         inputs = {
           inherit (inputs) jobsets;
           nixpkgs = inputs.nixpkgs-unstable;
         };
       };
-      cuda-packages-stable = defaults // {
-        description = "All (?) nixpkgs cudaSupport-sensitive packages [STABLE]";
+      "cuda-packages-25.11" = defaults // {
+        description = "All (?) nixpkgs cudaSupport-sensitive packages [nixos-25.11-small]";
         nixexprpath = "${jobsetDir}/cuda-packages.nix";
         inputs = {
           inherit (inputs) jobsets;
-          nixpkgs = inputs.nixpkgs-stable;
+          nixpkgs = inputs."nixpkgs-25.11";
         };
       };
     };
