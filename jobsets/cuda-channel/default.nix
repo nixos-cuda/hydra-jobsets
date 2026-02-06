@@ -52,6 +52,10 @@ let
   inherit (release-lib) pkgs;
   inherit (lib) concatStringsSep isDerivation;
 
+  cudaPackagesJobs = import ./cuda-packages-jobs.nix {
+    inherit lib release-lib;
+  };
+
   jobsFromChannelBlockers = import ./jobs-from-channel-blockers.nix {
     inherit
       lib
@@ -61,7 +65,7 @@ let
     channelBlockers = (import ../../channel-blockers.nix).${channelName};
   };
 
-  jobs = jobsFromChannelBlockers;
+  jobs = cudaPackagesJobs // jobsFromChannelBlockers;
 
   allJobNames =
     lib.mapAttrsToListRecursiveCond
