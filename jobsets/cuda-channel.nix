@@ -11,6 +11,7 @@
   # The nixpkgs instance
   nixpkgs,
 
+  # "nixos-unstable-cuda", "nixos-25.11-cuda", ...
   channelName,
   ...
 }@args:

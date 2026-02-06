@@ -19,6 +19,7 @@ let
       nixpkgsRelease,
       description,
       definitionFile,
+      extraInputs ? { },
     }:
     let
       nixpkgsChannelName = nixpkgsChannelNames.${nixpkgsRelease};
@@ -38,7 +39,8 @@ let
           type = "git";
           value = "https://github.com/NixOS/nixpkgs.git ${nixpkgsChannelName}";
         };
-      };
+      }
+      // extraInputs;
     };
 
   projects = {
@@ -72,11 +74,19 @@ let
         description = "Channel blockers";
         definitionFile = "cuda-channel.nix";
         nixpkgsRelease = "unstable";
+        extraInputs.channelName = {
+          type = "string";
+          value = "nixos-unstable-cuda";
+        };
       };
       "channel-25.11" = {
         description = "Channel blockers";
         definitionFile = "cuda-channel.nix";
         nixpkgsRelease = "25.11";
+        extraInputs.channelName = {
+          type = "string";
+          value = "nixos-25.11-cuda";
+        };
       };
     };
   };
