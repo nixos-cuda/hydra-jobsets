@@ -23,7 +23,7 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 
 ### CUDA packages
 
-- **jobsets:** `cuda-packages-[un]stable`
+- **jobsets:** `cuda-packages-{unstable,25.11}`
 - **definition file:** [./jobsets/cuda-packages.nix](./jobsets/cuda-packages.nix)
 - **Content:** All `cudaSupport`-sensitive nixpkgs packages (~2k packages).\
   More specifically, we leverage
@@ -37,7 +37,7 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 
 ### CUDA GPU checks
 
-- **jobsets:** `cuda-gpu-checks-[un]stable`
+- **jobsets:** `cuda-gpu-checks-{unstable,25.11}`
 - **definition file:** [./jobsets/cuda-tests.nix](./jobsets/cuda-tests.nix)
 - **Content:** All `<package>.*.gpuCheck` instances.\
   `.gpuCheck` package attributes are in-derivation tests that require access to
@@ -50,6 +50,14 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
   hardware-accelerated nixpkgs packages.\
   The role of this jobset is to run all of them in order to prevent spurious
   regressions.
+
+### CUDA channels
+
+- **jobsets:** `cuda-channel-{unstable,25.11}`
+- **definition file:** [./jobsets/cuda-channel.nix](./jobsets/cuda-packages.nix)
+- **Content:** Channel blockers listed in [./channel-blockers.nix](./channel-blockers.nix).
+- **Purpose:** Ensure that the given packages and tests build successfully before bumping the
+  `nixos-*-cuda` channels.
 
 
 ## Roadmap
