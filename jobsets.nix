@@ -30,7 +30,6 @@ let
       cuda-gpu-checks-unstable = defaults // {
         description = "Run GPU Tests [nixos-unstable-small]";
         nixexprpath = "${jobsetDir}/cuda-tests.nix";
-        keepnr = 0;
         inputs = {
           inherit (inputs) jobsets;
           nixpkgs = inputs.nixpkgs-unstable;
@@ -39,7 +38,6 @@ let
       "cuda-gpu-checks-25.11" = defaults // {
         description = "Run GPU Tests [nixos-25.11-small]";
         nixexprpath = "${jobsetDir}/cuda-tests.nix";
-        keepnr = 0;
         inputs = {
           inherit (inputs) jobsets;
           nixpkgs = inputs."nixpkgs-25.11";
