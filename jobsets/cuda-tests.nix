@@ -67,9 +67,10 @@ let
         v:
         let
           hasGpuCheck = v ? "gpuCheck";
-          requiresRocm = builtins.elem "rocm" (v.gpuCheck.requiredSystemFeatures or [ ]);
+          # Only build gpuCheck instances which explicitly require a CUDA-enabled GPU
+          requiresCuda = builtins.elem "cuda" (v.gpuCheck.requiredSystemFeatures or [ ]);
         in
-        hasGpuCheck && !requiresRocm;
+        hasGpuCheck && requiresCuda;
 
       testGpuChecks = lib.mapAttrs (
         testName: test:
