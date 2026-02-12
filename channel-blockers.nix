@@ -31,7 +31,6 @@ let
     # OpenCV
     "opencv"
     "opencv4"
-    "python3Packages.opencv"
     "python3Packages.opencv4"
 
     # LLM
