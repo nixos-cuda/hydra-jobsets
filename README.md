@@ -62,6 +62,7 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 
 ## Roadmap
 
+- [ ] Add flake checks to test that each jobset evaluates successfully
 - [ ] Add channels
     - [x] Create channel jobsets
     - [ ] Publish/push/bump channels
