@@ -40,13 +40,10 @@ let
     "python3Packages.vllm"
 
     # Python / Deep Learning
-    "python3Packages.cuda-bindings.gpuCheck"
     "python3Packages.jax"
     "python3Packages.tensorflow"
     "python3Packages.tiny-cuda-nn"
     "python3Packages.tinygrad"
-    "python3Packages.tinygrad.gpuCheck"
-    "python3Packages.tinygrad.tests.withCuda.gpuCheck"
 
     # PyTorch
     "python3Packages.torch"
@@ -62,7 +59,10 @@ let
 in
 {
   nixos-unstable-cuda = common ++ [
-
+    # Python / Deep Learning
+    "python3Packages.cuda-bindings.gpuCheck"
+    "python3Packages.tinygrad.gpuCheck"
+    "python3Packages.tinygrad.tests.withCuda.gpuCheck"
   ];
   "nixos-25.11-cuda" = common ++ [
 
