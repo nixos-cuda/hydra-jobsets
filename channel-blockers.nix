@@ -13,14 +13,10 @@ let
     "cudaPackages_13.cudatoolkit"
     "cudaPackages_13_0.cudatoolkit"
 
-    # Web browsers
-    "firefox-unwrapped"
-    "chromium"
-    "ungoogled-chromium"
-
     # Misc packages
     "blender"
     "blender.tests.tester-cudaAvailable.gpuCheck"
+    "firefox-unwrapped" # depends on onnxruntime
     "tiny-cuda-nn"
 
     # ONNX
