@@ -75,7 +75,7 @@ let
 
   # Aggregate job that signals that everything passes
   _tested = pkgs.releaseTools.aggregate {
-    name = channelName;
+    name = "${channelName}-${nixpkgs.revision or nixpkgs.rev or nixpkgs.shortRev or "unknown"}";
     meta = { };
     constituents = allJobNames;
   };
