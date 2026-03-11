@@ -4,7 +4,10 @@ let
     hidden = false;
     checkinterval = 1800;
     schedulingshares = 1;
-    keepnr = 1;
+
+    # Number of past eval results to keep.
+    # The older ones will be garbage collected.
+    keepnr = 500;
     emailoverride = "";
     nixexprinput = "jobsets";
   };
