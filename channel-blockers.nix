@@ -18,6 +18,7 @@ let
     "blender.tests.tester-cudaAvailable.gpuCheck"
     "firefox-unwrapped" # depends on onnxruntime
     "tiny-cuda-nn"
+    "python3Packages.nvidia-ml-py.tests.tester-nvmlInit.gpuCheck"
 
     # ONNX
     "onnxruntime"
