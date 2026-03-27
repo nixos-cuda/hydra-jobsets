@@ -30,7 +30,7 @@ let
   ##########################################################
 
   lib = import "${nixpkgs}/lib";
-  mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
+  mkReleaseLibMerge = import "${nixpkgsMerge}/pkgs/top-level/release-lib.nix";
 
   nixpkgsConfig = {
     # TODO: why not simply "allowUnfree = true"?
@@ -53,12 +53,12 @@ let
     __allowFileset = false;
   };
 
-  release-lib = mkReleaseLib (
+  releaseLibMerge = mkReleaseLibMerge (
     {
       inherit supportedSystems nixpkgsArgs;
       system = currentSystem;
     }
-    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
+    // lib.intersectAttrs (lib.functionArgs mkReleaseLibMerge) args
   );
 
   ##########################################################
@@ -192,6 +192,6 @@ let
 
   # Explicitly specified platforms take precedence over the platforms
   # automatically inferred in autoPackagePlatforms
-  jobs = release-lib.mapTestOn allPackagePlatforms;
+  jobs = releaseLibMerge.mapTestOn allPackagePlatforms;
 in
 jobs
