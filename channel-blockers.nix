@@ -60,6 +60,9 @@ in
     "python3Packages.cuda-bindings.gpuCheck"
     "python3Packages.tinygrad.gpuCheck"
     "python3Packages.tinygrad.tests.withCuda.gpuCheck"
+
+    # PyTorch
+    "python3Packages.torchaudio.gpuCheck"
   ];
   "nixos-25.11-cuda" = common ++ [
 
