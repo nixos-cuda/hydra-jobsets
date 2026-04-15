@@ -6,7 +6,6 @@
 # Then we collect only packages that are changed by this PR and are affected by enabling cudaSupport.
 # TODO:
 # - add all gpuChecks that are affected by the PR into this jobset
-# - unconditionally add all channel blockers
 {
   # The platforms supported by the NixOS-CUDA Hydra instance
   supportedSystems ? [
@@ -21,6 +20,7 @@
   nixpkgsMerge,
   # Head of the target branch, should be trusted
   nixpkgs,
+  targetBranch ? "master",
   ...
 }@args:
 
@@ -190,8 +190,20 @@ let
 
   allPackagePlatforms = entriesToAttrSet entries;
 
+  prJobs = releaseLibMerge.mapTestOn allPackagePlatforms;
+  branchToChannelMap = {
+    master = "nixos-unstable-cuda";
+    "release-25.11" = "nixos-25.11-cuda";
+  };
+  channelJobs = import ./cuda-channel/default.nix {
+    inherit supportedSystems currentSystem;
+    nixpkgs = nixpkgsMerge;
+    channelName = branchToChannelMap.${targetBranch};
+  };
+
   # Explicitly specified platforms take precedence over the platforms
   # automatically inferred in autoPackagePlatforms
-  jobs = releaseLibMerge.mapTestOn allPackagePlatforms;
+  jobs =
+    if branchToChannelMap ? ${targetBranch} then lib.recursiveUpdate prJobs channelJobs else prJobs;
 in
 jobs
