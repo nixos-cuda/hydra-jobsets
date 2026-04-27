@@ -57,6 +57,7 @@ in
 {
   nixos-unstable-cuda = common ++ [
     # Python / Deep Learning
+    "python3Packages.cuda-bindings"
     "python3Packages.cuda-bindings.gpuCheck"
     "python3Packages.tinygrad.gpuCheck"
     "python3Packages.tinygrad.tests.withCuda.gpuCheck"
