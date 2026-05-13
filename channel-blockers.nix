@@ -2,6 +2,9 @@ let
   common = [
     # cudaPackages
     "cudaPackages.cudatoolkit"
+    "cudaPackages.cudnn"
+    "cudaPackages.libcusolver"
+    "cudaPackages.libcusolvermp"
     "cudaPackages.saxpy"
     "cudaPackages.saxpy.gpuCheck"
 
@@ -56,6 +59,13 @@ let
 in
 {
   nixos-unstable-cuda = common ++ [
+    # cudaPackages
+    "cudaPackages.nvbandwidth"
+
+    # Other cudaPackages versions
+    "cudaPackages_13_1.cudatoolkit"
+    "cudaPackages_13_2.cudatoolkit"
+
     # Python / Deep Learning
     "python3Packages.cuda-bindings"
     "python3Packages.cuda-bindings.gpuCheck"
