@@ -135,8 +135,15 @@ let
           name:
           # Package must be added or changed in this PR
           (!(headCuda ? ${name}) || (mergeCuda.${name} != headCuda.${name}))
-          # And must be one affected by cudaSupport
-          && (!(mergeNoCuda ? ${name}) || (mergeCuda.${name} != mergeNoCuda.${name}));
+          # And must be one of:
+          && (
+            # in one of cudaPackages sets
+            (lib.hasPrefix "cudaPackages" name)
+            # only present with cudaSupport enabled
+            || !(mergeNoCuda ? ${name})
+            # affected by enabling cudaSupport
+            || (mergeCuda.${name} != mergeNoCuda.${name})
+          );
         filtered = lib.filter predicate (lib.attrNames mergeCuda);
       in
       # Cut out "release-checks"
