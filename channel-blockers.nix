@@ -56,9 +56,8 @@ let
     "python3Packages.triton-cuda.tests.axpy-cuda.gpuCheck"
     "python3Packages.triton.gpuCheck"
   ];
-in
-{
-  nixos-unstable-cuda = common ++ [
+
+  post2605 = [
     # cudaPackages
     "cudaPackages.nvbandwidth"
 
@@ -75,6 +74,18 @@ in
     # PyTorch
     "python3Packages.torchaudio.gpuCheck"
   ];
+in
+{
+  nixos-unstable-cuda =
+    common
+    ++ post2605
+    ++ [
+    ];
+  "nixos-26.05-cuda" =
+    common
+    ++ post2605
+    ++ [
+    ];
   "nixos-25.11-cuda" = common ++ [
 
   ];
