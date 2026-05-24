@@ -12,6 +12,12 @@ let
     nixexprinput = "jobsets";
   };
 
+  nixpkgsChannelNames = {
+    unstable = "nixos-unstable-small";
+    "26.05" = "nixos-26.05-small";
+    "25.11" = "nixos-25.11-small";
+  };
+
   mkJobset =
     {
       nixpkgsRelease,
@@ -20,7 +26,7 @@ let
       extraInputs ? { },
     }:
     let
-      nixpkgsChannelName = "nixos-${nixpkgsRelease}-small";
+      nixpkgsChannelName = nixpkgsChannelNames.${nixpkgsRelease};
     in
     defaults
     // {

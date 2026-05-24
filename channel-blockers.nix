@@ -57,7 +57,7 @@ let
     "python3Packages.triton.gpuCheck"
   ];
 
-  post2605 = [
+  post2511 = [
     # cudaPackages
     "cudaPackages.nvbandwidth"
 
@@ -78,12 +78,12 @@ in
 {
   nixos-unstable-cuda =
     common
-    ++ post2605
+    ++ post2511
     ++ [
     ];
   "nixos-26.05-cuda" =
     common
-    ++ post2605
+    ++ post2511
     ++ [
     ];
   "nixos-25.11-cuda" = common ++ [
