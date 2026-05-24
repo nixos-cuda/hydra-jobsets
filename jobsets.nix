@@ -12,11 +12,6 @@ let
     nixexprinput = "jobsets";
   };
 
-  nixpkgsChannelNames = {
-    unstable = "nixos-unstable-small";
-    "25.11" = "nixos-25.11-small";
-  };
-
   mkJobset =
     {
       nixpkgsRelease,
@@ -25,7 +20,7 @@ let
       extraInputs ? { },
     }:
     let
-      nixpkgsChannelName = nixpkgsChannelNames.${nixpkgsRelease};
+      nixpkgsChannelName = "nixos-${nixpkgsRelease}-small";
     in
     defaults
     // {
@@ -54,6 +49,12 @@ let
         definitionFile = "cuda-tests.nix";
         nixpkgsRelease = "unstable";
       };
+      "cuda-gpu-checks-26.05" = {
+        description = "Run GPU Tests";
+        definitionFile = "cuda-tests.nix";
+        nixpkgsRelease = "26.05";
+      };
+      # TODO: remove 25.11 support once it will be marked as unsupported
       "cuda-gpu-checks-25.11" = {
         description = "Run GPU Tests";
         definitionFile = "cuda-tests.nix";
@@ -66,6 +67,12 @@ let
         definitionFile = "cuda-packages.nix";
         nixpkgsRelease = "unstable";
       };
+      "cuda-packages-26.05" = {
+        description = "All nixpkgs cudaSupport-sensitive packages";
+        definitionFile = "cuda-packages.nix";
+        nixpkgsRelease = "26.05";
+      };
+      # TODO: remove 25.11 support once it will be marked as unsupported
       "cuda-packages-25.11" = {
         description = "All nixpkgs cudaSupport-sensitive packages";
         definitionFile = "cuda-packages.nix";
@@ -82,6 +89,16 @@ let
           value = "nixos-unstable-cuda";
         };
       };
+      "channel-26.05" = {
+        description = "Channel blockers";
+        definitionFile = "cuda-channel/default.nix";
+        nixpkgsRelease = "26.05";
+        extraInputs.channelName = {
+          type = "string";
+          value = "nixos-26.05-cuda";
+        };
+      };
+      # TODO: remove 25.11 support once it will be marked as unsupported
       "channel-25.11" = {
         description = "Channel blockers";
         definitionFile = "cuda-channel/default.nix";
