@@ -25,12 +25,32 @@
 }@args:
 
 let
+  # Ignore this CVE for CI:
+  # [CVE-2026-24188](https://github.com/NixOS/nixpkgs/issues/522570): OOB write
+  # Can't use allowInsecurePredicate because Nixpkgs ci/eval needs the config to be serializable to JSON
+  patchTensorrt =
+    nixpkgs:
+    (import nixpkgsMerge {
+      system = currentSystem;
+      config = { };
+      overlays = [ ];
+    }).runCommand
+      "patch-tensorrt"
+      { }
+      ''
+        cp -r ${nixpkgs} $out
+        substituteInPlace $out/pkgs/development/cuda-modules/packages/tensorrt.nix \
+          --replace-fail '"CVE-2026-24188: OOB write"' '''
+      '';
+  nixpkgs' = patchTensorrt nixpkgs;
+  nixpkgsMerge' = patchTensorrt nixpkgsMerge;
+
   ##########################################################
   # STEP 1: Initialize release-lib
   ##########################################################
 
-  lib = import "${nixpkgs}/lib";
-  mkReleaseLibMerge = import "${nixpkgsMerge}/pkgs/top-level/release-lib.nix";
+  lib = import "${nixpkgs'}/lib";
+  mkReleaseLibMerge = import "${nixpkgsMerge'}/pkgs/top-level/release-lib.nix";
 
   nixpkgsConfig = {
     # TODO: why not simply "allowUnfree = true"?
@@ -42,10 +62,6 @@ let
     allowUnfree = true;
     cudaSupport = true;
     inHydra = true;
-
-    # [CVE-2026-24188](https://github.com/NixOS/nixpkgs/issues/522570):
-    # OOB write
-    allowInsecurePredicate = p: lib.getName p == "tensorrt";
 
     # Don't evaluate duplicate and/or deprecated attributes
     allowAliases = false;
@@ -70,14 +86,14 @@ let
   # `false` to `true`
   ##########################################################
 
-  ciMerge = import "${nixpkgsMerge}/ci" {
+  ciMerge = import "${nixpkgsMerge'}/ci" {
     system = currentSystem;
-    nixpkgs = nixpkgsMerge;
+    nixpkgs = nixpkgsMerge';
   };
 
-  ci = import "${nixpkgs}/ci" {
+  ci = import "${nixpkgs'}/ci" {
     system = currentSystem;
-    inherit nixpkgs;
+    nixpkgs = nixpkgs';
   };
 
   # TODO: optimize the value of chunkSize for the hydra machine
@@ -209,7 +225,7 @@ let
   };
   channelJobs = import ./cuda-channel/default.nix {
     inherit supportedSystems currentSystem;
-    nixpkgs = nixpkgsMerge;
+    nixpkgs = nixpkgsMerge';
     channelName = branchToChannelMap.${targetBranch};
   };
 
