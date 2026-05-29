@@ -37,7 +37,9 @@ let
     "llama-cpp"
     "mistral-rs"
     "ollama"
-    "python3Packages.vllm"
+    # vllm < 0.20.0 has known vulnerabilities
+    # TODO: re-enable when possible
+    #"python3Packages.vllm"
 
     # Python / Deep Learning
     "python3Packages.jax"
