@@ -25,25 +25,34 @@
 }@args:
 
 let
-  # Ignore this CVE for CI:
-  # [CVE-2026-24188](https://github.com/NixOS/nixpkgs/issues/522570): OOB write
+  # Ignore these known vulnerabilities for CI:
+  # - tensorrt:
+  #   - [CVE-2026-24188](https://github.com/NixOS/nixpkgs/issues/522570): OOB write
+  # - vllm:
+  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-7972-pg2x-xr59 (CVE-2026-27893)
+  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-83vm-p52w-f9pw (CVE-2026-44223)
+  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-hpv8-x276-m59f (CVE-2026-44222)
   # Can't use allowInsecurePredicate because Nixpkgs ci/eval needs the config to be serializable to JSON
-  patchTensorrt =
-    nixpkgs:
+  patchInsecurePackages =
+    nixpkgsTree:
     (import nixpkgsMerge {
       system = currentSystem;
       config = { };
       overlays = [ ];
     }).runCommand
-      "patch-tensorrt"
+      "patch-nixpkgs"
       { }
       ''
-        cp -r ${nixpkgs} $out
+        cp -r ${nixpkgsTree} $out
         substituteInPlace $out/pkgs/development/cuda-modules/packages/tensorrt.nix \
-          --replace-fail '"CVE-2026-24188: OOB write"' '''
+          --replace-warn '"CVE-2026-24188: OOB write"' '''
+        substituteInPlace $out/pkgs/development/python-modules/vllm/default.nix \
+          --replace-warn '"CVE-2026-27893"' ''' \
+          --replace-warn '"CVE-2026-44223"' ''' \
+          --replace-warn '"CVE-2026-44222"' '''
       '';
-  nixpkgs' = patchTensorrt nixpkgs;
-  nixpkgsMerge' = patchTensorrt nixpkgsMerge;
+  nixpkgs' = patchInsecurePackages nixpkgs;
+  nixpkgsMerge' = patchInsecurePackages nixpkgsMerge;
 
   ##########################################################
   # STEP 1: Initialize release-lib
