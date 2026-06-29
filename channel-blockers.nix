@@ -5,6 +5,7 @@ let
     "cudaPackages.cudnn"
     "cudaPackages.libcusolver"
     "cudaPackages.libcusolvermp"
+    "cudaPackages.nvbandwidth"
     "cudaPackages.saxpy"
     "cudaPackages.saxpy.gpuCheck"
 
@@ -15,6 +16,8 @@ let
     "cudaPackages_12_9.cudatoolkit"
     "cudaPackages_13.cudatoolkit"
     "cudaPackages_13_0.cudatoolkit"
+    "cudaPackages_13_1.cudatoolkit"
+    "cudaPackages_13_2.cudatoolkit"
 
     # Misc packages
     "blender"
@@ -42,10 +45,14 @@ let
     #"python3Packages.vllm"
 
     # Python / Deep Learning
+    "python3Packages.cuda-bindings"
+    "python3Packages.cuda-bindings.gpuCheck"
     "python3Packages.jax"
     "python3Packages.tensorflow"
     "python3Packages.tiny-cuda-nn"
     "python3Packages.tinygrad"
+    "python3Packages.tinygrad.gpuCheck"
+    "python3Packages.tinygrad.tests.withCuda.gpuCheck"
 
     # PyTorch
     "python3Packages.torch"
@@ -53,42 +60,16 @@ let
     "python3Packages.torch.tests.tester-compileCuda.gpuCheck"
     "python3Packages.torch.tests.tester-cudaAvailable.gpuCheck"
     "python3Packages.torchaudio"
+    "python3Packages.torchaudio.gpuCheck"
     "python3Packages.torchvision"
     "python3Packages.triton"
     "python3Packages.triton-cuda.tests.axpy-cuda.gpuCheck"
     "python3Packages.triton.gpuCheck"
   ];
-
-  post2511 = [
-    # cudaPackages
-    "cudaPackages.nvbandwidth"
-
-    # Other cudaPackages versions
-    "cudaPackages_13_1.cudatoolkit"
-    "cudaPackages_13_2.cudatoolkit"
-
-    # Python / Deep Learning
-    "python3Packages.cuda-bindings"
-    "python3Packages.cuda-bindings.gpuCheck"
-    "python3Packages.tinygrad.gpuCheck"
-    "python3Packages.tinygrad.tests.withCuda.gpuCheck"
-
-    # PyTorch
-    "python3Packages.torchaudio.gpuCheck"
-  ];
 in
 {
-  nixos-unstable-cuda =
-    common
-    ++ post2511
-    ++ [
-    ];
-  "nixos-26.05-cuda" =
-    common
-    ++ post2511
-    ++ [
-    ];
-  "nixos-25.11-cuda" = common ++ [
-
+  nixos-unstable-cuda = common ++ [
+  ];
+  "nixos-26.05-cuda" = common ++ [
   ];
 }
