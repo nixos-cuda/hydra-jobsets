@@ -69,6 +69,8 @@ let
 in
 {
   nixos-unstable-cuda = common ++ [
+    # Other cudaPackages versions
+    "cudaPackages_13_3.cudatoolkit"
   ];
   "nixos-26.05-cuda" = common ++ [
   ];
