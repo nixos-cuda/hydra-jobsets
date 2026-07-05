@@ -13,7 +13,7 @@ in
       {
         # Pretty-print the output to logs
         buildCommand = ''
-          jq -S '.value|fromjson' .attrs.json | tee $out
+          jq -S .value "$NIX_ATTRS_JSON_FILE" | tee $out
         '';
       };
 }
