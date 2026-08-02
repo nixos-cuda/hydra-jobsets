@@ -48,7 +48,7 @@ let
     "python3Packages.cuda-bindings"
     "python3Packages.cuda-bindings.gpuCheck"
     "python3Packages.jax"
-    "python3Packages.tensorflow"
+    "python313Packages.tensorflow" # tensorflow is not abailable on python 3.14
     "python3Packages.tiny-cuda-nn"
     "python3Packages.tinygrad"
     "python3Packages.tinygrad.gpuCheck"
