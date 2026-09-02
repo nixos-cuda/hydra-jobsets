@@ -25,6 +25,13 @@
 }@args:
 
 let
+  # Used for simple IFDs
+  pkgs = import nixpkgs {
+    system = currentSystem;
+    config = { };
+    overlays = [ ];
+  };
+
   # Ignore these known vulnerabilities for CI:
   # - tensorrt:
   #   - [CVE-2026-24188](https://github.com/NixOS/nixpkgs/issues/522570): OOB write
@@ -35,22 +42,15 @@ let
   # Can't use allowInsecurePredicate because Nixpkgs ci/eval needs the config to be serializable to JSON
   patchInsecurePackages =
     nixpkgsTree:
-    (import nixpkgsMerge {
-      system = currentSystem;
-      config = { };
-      overlays = [ ];
-    }).runCommand
-      "patch-nixpkgs"
-      { }
-      ''
-        cp -r ${nixpkgsTree} $out
-        substituteInPlace $out/pkgs/development/cuda-modules/packages/tensorrt.nix \
-          --replace-warn '"CVE-2026-24188: OOB write"' '''
-        substituteInPlace $out/pkgs/development/python-modules/vllm/default.nix \
-          --replace-warn '"CVE-2026-27893"' ''' \
-          --replace-warn '"CVE-2026-44223"' ''' \
-          --replace-warn '"CVE-2026-44222"' '''
-      '';
+    pkgs.runCommand "patch-nixpkgs" { } ''
+      cp -r ${nixpkgsTree} $out
+      substituteInPlace $out/pkgs/development/cuda-modules/packages/tensorrt.nix \
+        --replace-warn '"CVE-2026-24188: OOB write"' '''
+      substituteInPlace $out/pkgs/development/python-modules/vllm/default.nix \
+        --replace-warn '"CVE-2026-27893"' ''' \
+        --replace-warn '"CVE-2026-44223"' ''' \
+        --replace-warn '"CVE-2026-44222"' '''
+    '';
   nixpkgs' = patchInsecurePackages nixpkgs;
   nixpkgsMerge' = patchInsecurePackages nixpkgsMerge;
 
@@ -100,35 +100,24 @@ let
     nixpkgs = nixpkgsMerge';
   };
 
-  ci = import "${nixpkgs'}/ci" {
+  ciHead = import "${nixpkgs'}/ci" {
     system = currentSystem;
     nixpkgs = nixpkgs';
   };
 
   # TODO: optimize the value of chunkSize for the hydra machine
-  evalHeadCuda = (
-    ci.eval {
-      extraNixpkgsConfig = nixpkgsConfig;
-    }
-  );
+  baseline =
+    ci: withCuda:
+    (ci.eval {
+      extraNixpkgsConfig = if withCuda then nixpkgsConfig else nixpkgsConfig // { cudaSupport = false; };
+    }).baseline
+      { evalSystems = supportedSystems; };
 
-  evalMergeNoCuda = (
-    ciMerge.eval {
-      extraNixpkgsConfig = nixpkgsConfig // {
-        cudaSupport = false;
-      };
-    }
-  );
-
-  evalMergeCuda = (
-    ciMerge.eval {
-      extraNixpkgsConfig = nixpkgsConfig;
-    }
-  );
-
-  baselineHeadCuda = evalHeadCuda.baseline { evalSystems = supportedSystems; };
-  baselineMergeCuda = evalMergeCuda.baseline { evalSystems = supportedSystems; };
-  baselineMergeNoCuda = evalMergeNoCuda.baseline { evalSystems = supportedSystems; };
+  baselines = pkgs.linkFarm "baselines" {
+    headCuda = baseline ciHead true;
+    mergeCuda = baseline ciMerge true;
+    mergeNoCuda = baseline ciHead false;
+  };
 
   # Taken from ci/eval/diff.nix
   getAttrs =
@@ -157,9 +146,9 @@ let
     lib.forEach supportedSystems (
       system:
       let
-        headCuda = getAttrs baselineHeadCuda system;
-        mergeCuda = getAttrs baselineMergeCuda system;
-        mergeNoCuda = getAttrs baselineMergeNoCuda system;
+        headCuda = getAttrs "${baselines}/headCuda" system;
+        mergeCuda = getAttrs "${baselines}/mergeCuda" system;
+        mergeNoCuda = getAttrs "${baselines}/mergeNoCuda" system;
         predicate =
           name:
           # Package must be added or changed in this PR
