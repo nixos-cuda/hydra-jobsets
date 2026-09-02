@@ -135,6 +135,17 @@ let
     in
     builtins.fromJSON data;
 
+  # Cache attrs for each package set + config + system
+  # { "x86_64-linux": { headCuda = ...; mergeCuda = ...; mergeNoCuda = ...; }; }
+  attrs = lib.genAttrs supportedSystems (
+    system:
+    lib.genAttrs [
+      "headCuda"
+      "mergeCuda"
+      "mergeNoCuda"
+    ] (name: getAttrs "${baselines}/${name}" system)
+  );
+
   # Collect all paths that changed between these into a form of a list:
   # [
   #   {system = "x86_64-linux"; path = ["csxcad"];}
@@ -151,9 +162,11 @@ let
     lib.forEach supportedSystems (
       system:
       let
-        headCuda = getAttrs "${baselines}/headCuda" system;
-        mergeCuda = getAttrs "${baselines}/mergeCuda" system;
-        mergeNoCuda = getAttrs "${baselines}/mergeNoCuda" system;
+        inherit (attrs.${system})
+          headCuda
+          mergeCuda
+          mergeNoCuda
+          ;
         predicate =
           name:
           # Package must be added or changed in this PR
