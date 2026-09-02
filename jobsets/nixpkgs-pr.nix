@@ -59,7 +59,6 @@ let
   ##########################################################
 
   lib = import "${nixpkgs'}/lib";
-  mkReleaseLibMerge = import "${nixpkgsMerge'}/pkgs/top-level/release-lib.nix";
 
   nixpkgsConfig = {
     # TODO: why not simply "allowUnfree = true"?
@@ -82,12 +81,18 @@ let
     __allowFileset = false;
   };
 
-  releaseLibMerge = mkReleaseLibMerge (
+  # release-lib.nix provides tools to efficiently map jobs to the actual derivations (packages)
+  # it memoizes packages sets for each platform, so we need to have multiple instances
+  # for different configs, i.e. with and without CUDA support
+  # We use release-lib from the target branch to keep it more stable.
+  mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
+  releaseLibMergeCuda = mkReleaseLib (
     {
       inherit supportedSystems nixpkgsArgs;
       system = currentSystem;
+      packageSet = import nixpkgsMerge';
     }
-    // lib.intersectAttrs (lib.functionArgs mkReleaseLibMerge) args
+    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
   );
 
   ##########################################################
@@ -215,7 +220,7 @@ let
 
   allPackagePlatforms = entriesToAttrSet entries;
 
-  prJobs = releaseLibMerge.mapTestOn allPackagePlatforms;
+  prJobs = releaseLibMergeCuda.mapTestOn allPackagePlatforms;
   branchToChannelMap = {
     master = "nixos-unstable-cuda";
     "release-26.05" = "nixos-26.05-cuda";
