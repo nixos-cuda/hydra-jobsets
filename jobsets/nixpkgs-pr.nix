@@ -11,6 +11,7 @@
   supportedSystems ? [
     "x86_64-linux"
     # "aarch64-linux"
+    # "aarch64-darwin"
   ],
   # The system evaluating this expression
   # nixpkgs/ci doesn't work on non-Linux platform, so default to Linux while we use it
@@ -123,13 +124,16 @@ let
     nixpkgs = nixpkgs';
   };
 
+  supportsCuda = lib.hasSuffix "-linux";
+  supportedSystemsWithCuda = lib.filter supportsCuda supportedSystems;
+
   # TODO: optimize the value of chunkSize for the hydra machine
   baseline =
     ci: withCuda:
     (ci.eval {
       extraNixpkgsConfig = if withCuda then nixpkgsConfig else nixpkgsConfig // { cudaSupport = false; };
     }).baseline
-      { evalSystems = supportedSystems; };
+      { evalSystems = if withCuda then supportedSystemsWithCuda else supportedSystems; };
 
   baselines = pkgs.linkFarm "baselines" {
     headCuda = baseline ciHead true;
@@ -153,12 +157,16 @@ let
   # { "x86_64-linux": { headCuda = ...; mergeCuda = ...; mergeNoCuda = ...; }; }
   attrs = lib.genAttrs supportedSystems (
     system:
-    lib.genAttrs [
-      "headCuda"
-      "headNoCuda"
-      "mergeCuda"
-      "mergeNoCuda"
-    ] (name: getAttrs "${baselines}/${name}" system)
+    lib.genAttrs (
+      [
+        "headNoCuda"
+        "mergeNoCuda"
+      ]
+      ++ lib.optionals (supportsCuda system) [
+        "headCuda"
+        "mergeCuda"
+      ]
+    ) (name: getAttrs "${baselines}/${name}" system)
   );
 
   # Collect all paths that changed between these into a form of a list:
@@ -174,7 +182,7 @@ let
   # ]
 
   entriesCuda = lib.concatLists (
-    lib.forEach supportedSystems (
+    lib.forEach supportedSystemsWithCuda (
       system:
       let
         inherit (attrs.${system})
@@ -303,7 +311,8 @@ let
     "release-26.05" = "nixos-26.05-cuda";
   };
   channelJobs = import ./cuda-channel/default.nix {
-    inherit supportedSystems currentSystem;
+    inherit currentSystem;
+    supportedSystems = supportedSystemsWithCuda;
     nixpkgs = nixpkgsMerge';
     channelName = branchToChannelMap.${targetBranch};
   };
