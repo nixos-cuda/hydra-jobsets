@@ -106,7 +106,9 @@ let
             # <pkgs-system>.python3Packages.torch;
             pkg = (getAttrFromPath currentPath (pkgsFor system));
           in
-          hydraJob' pkg
+          {
+            cuda = hydraJob' pkg;
+          }
         );
       in
       children // (optionalAttrs ((builtins.length byLeaf.right) > 0) packageJobs)
