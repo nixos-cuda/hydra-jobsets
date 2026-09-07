@@ -94,6 +94,19 @@ let
     }
     // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
   );
+  releaseLibMergeNoCuda = mkReleaseLib (
+    {
+      inherit supportedSystems;
+      nixpkgsArgs = nixpkgsArgs // {
+        config = nixpkgsArgs.config // {
+          cudaSupport = false;
+        };
+      };
+      system = currentSystem;
+      packageSet = import nixpkgsMerge';
+    }
+    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
+  );
 
   ##########################################################
   # STEP 2: Compute the set of attrpaths in nixpkgs that are affected by switching cudaSupport from
@@ -120,6 +133,7 @@ let
 
   baselines = pkgs.linkFarm "baselines" {
     headCuda = baseline ciHead true;
+    headNoCuda = baseline ciHead false;
     mergeCuda = baseline ciMerge true;
     mergeNoCuda = baseline ciMerge false;
   };
@@ -141,6 +155,7 @@ let
     system:
     lib.genAttrs [
       "headCuda"
+      "headNoCuda"
       "mergeCuda"
       "mergeNoCuda"
     ] (name: getAttrs "${baselines}/${name}" system)
@@ -158,7 +173,7 @@ let
   #   ...
   # ]
 
-  entries = lib.concatLists (
+  entriesCuda = lib.concatLists (
     lib.forEach supportedSystems (
       system:
       let
@@ -192,6 +207,30 @@ let
     )
   );
 
+  entriesNoCuda = lib.concatLists (
+    lib.forEach supportedSystems (
+      system:
+      let
+        inherit (attrs.${system})
+          headNoCuda
+          mergeNoCuda
+          ;
+        predicate =
+          name:
+          # Package must be added or changed in this PR
+          (!(headNoCuda ? ${name}) || (mergeNoCuda.${name} != headNoCuda.${name}));
+        filtered = lib.filter predicate (lib.attrNames mergeNoCuda);
+      in
+      # Cut out "release-checks"
+      lib.filter (e: e.path != [ ]) (
+        map (pathStr: {
+          inherit system;
+          path = lib.init (lib.splitString "." pathStr);
+        }) filtered
+      )
+    )
+  );
+
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
   ##########################################################
@@ -203,6 +242,15 @@ let
   #   python3Packages.foo = [ "x86_64-linux" ];
   #   python3Packages.bar = [ "aarch64-linux" ];
   #   cool = [ "x86_64-linux" "aarch64-linux" ];
+  # }
+  #
+  # Then apply testOn and add cuda/nocuda suffixes to bring it to:
+  #
+  # prJobs = {
+  #   python3Packages.torch = { "x86_64-linux".cuda: <drv>; "aarch64-linux".cuda: <drv>; };
+  #   python3Packages.foo = { "x86_64-linux".nocuda: <drv>; };
+  #   python3Packages.bar = { "aarch64-linux".cuda: <drv>; };
+  #   cool = { "x86_64-linux".nocuda: <drv>; "aarch64-linux".nocuda: <drv>; };
   # }
   #
   # thanks to some nix magic by @MattSturgeon (thanks!)
@@ -231,9 +279,25 @@ let
         throw "Conflicting attr paths:${lib.concatMapStrings (entry: "\n- ${entry.path}") entries}"
     ) (groupEntries entries);
 
-  allPackagePlatforms = entriesToAttrSet entries;
+  # Like mapTestOn, only adds one more attrset layer, so that we can
+  # distinguish builds with and without CUDA support
+  mapTestOnWithSuffix =
+    releaseLib: suffix:
+    let
+      inherit (releaseLib) forMatchingSystems hydraJob' pkgsFor;
+    in
+    lib.mapAttrsRecursive (
+      #path: metaPatterns: releaseLib.testOn metaPatterns (pkgs: lib.getAttrFromPath path pkgs)
+      path: metaPatterns:
+      forMatchingSystems metaPatterns (system: {
+        ${suffix} = hydraJob' (lib.getAttrFromPath path (pkgsFor system));
+      })
+    );
 
-  prJobs = releaseLibMergeCuda.mapTestOn allPackagePlatforms;
+  prJobsCuda = mapTestOnWithSuffix releaseLibMergeCuda "cuda" (entriesToAttrSet entriesCuda);
+  prJobsNoCuda = mapTestOnWithSuffix releaseLibMergeNoCuda "nocuda" (entriesToAttrSet entriesNoCuda);
+  prJobs = lib.recursiveUpdate prJobsCuda prJobsNoCuda;
+
   branchToChannelMap = {
     master = "nixos-unstable-cuda";
     "release-26.05" = "nixos-26.05-cuda";
