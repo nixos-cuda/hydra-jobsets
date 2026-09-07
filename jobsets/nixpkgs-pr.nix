@@ -121,7 +121,7 @@ let
   baselines = pkgs.linkFarm "baselines" {
     headCuda = baseline ciHead true;
     mergeCuda = baseline ciMerge true;
-    mergeNoCuda = baseline ciHead false;
+    mergeNoCuda = baseline ciMerge false;
   };
 
   # Taken from ci/eval/diff.nix
