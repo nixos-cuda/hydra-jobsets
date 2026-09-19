@@ -31,6 +31,9 @@ let
     "python3Packages.onnx"
     "python3Packages.onnxruntime"
 
+    # XLA
+    "xla"
+
     # OpenCV
     "opencv"
     "opencv4"
