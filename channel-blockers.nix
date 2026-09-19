@@ -31,9 +31,6 @@ let
     "python3Packages.onnx"
     "python3Packages.onnxruntime"
 
-    # XLA
-    "xla"
-
     # OpenCV
     "opencv"
     "opencv4"
@@ -56,6 +53,7 @@ let
     "python3Packages.tinygrad"
     "python3Packages.tinygrad.gpuCheck"
     "python3Packages.tinygrad.tests.withCuda.gpuCheck"
+    "xla"
 
     # PyTorch
     "python3Packages.torch"
