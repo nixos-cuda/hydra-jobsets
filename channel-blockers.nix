@@ -53,7 +53,7 @@ let
     "python3Packages.tinygrad"
     "python3Packages.tinygrad.gpuCheck"
     "python3Packages.tinygrad.tests.withCuda.gpuCheck"
-    "xla"
+    # "xla": unavailable on CUDA 13.4 (among others)
 
     # PyTorch
     "python3Packages.torch"
