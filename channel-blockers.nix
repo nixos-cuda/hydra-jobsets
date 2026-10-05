@@ -72,6 +72,7 @@ in
   nixos-unstable-cuda = common ++ [
     # Other cudaPackages versions
     "cudaPackages_13_3.cudatoolkit"
+    "cudaPackages_13_4.cudatoolkit"
   ];
   "nixos-26.05-cuda" = common ++ [
   ];
