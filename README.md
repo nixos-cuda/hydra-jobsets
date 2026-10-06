@@ -39,10 +39,13 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 
 - **jobsets:** `cuda-gpu-checks-{unstable,26.05}`
 - **definition file:** [./jobsets/cuda-tests.nix](./jobsets/cuda-tests.nix)
-- **Content:** All `<package>.*.gpuCheck` instances.\
-  `.gpuCheck` package attributes are in-derivation tests that require access to
-  an NVIDIA GPU at build time.\
-  This requirement is encoded as `requiredSystemFeatures = [ "cuda" ];`.
+- **Content:** All passthru tests that require access to an NVIDIA GPU at build time.\
+  This requirement is encoded as `requiredSystemFeatures = [ "cuda" ];`, per the\
+  [CUDA testing convention](https://github.com/NixOS/nixpkgs/blob/master/doc/languages-frameworks/cuda.section.md).\
+  Tests are discovered by their system features, whatever they are named:\
+  nested under `passthru.tests` (e.g. `tests.cuda.<name>`, `tests.<name>.gpuCheck`)\
+  or as a top-level `passthru.gpuCheck`.\
+  Tests requiring the `rocm` system feature are skipped: they need an AMD GPU.
 - **Purpose:** Ensure packages are properly tested on physical hardware.
   Simply building a package with `cudaSupport` does not guarantee correct
   runtime behavior.\
