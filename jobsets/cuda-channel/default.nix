@@ -13,6 +13,10 @@
 
   # "nixos-unstable-cuda", "nixos-26.05-cuda", ...
   channelName,
+
+  # An existing release-lib instance for `nixpkgs` with the config below, whose package sets are then shared (e.g.,
+  # with the PR jobset's jobs)
+  releaseLib ? null,
   ...
 }@args:
 
@@ -41,13 +45,17 @@ let
     __allowFileset = false;
   };
 
-  release-lib = mkReleaseLib (
-    {
-      inherit supportedSystems nixpkgsArgs;
-      system = currentSystem;
-    }
-    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
-  );
+  release-lib =
+    if releaseLib != null then
+      releaseLib
+    else
+      mkReleaseLib (
+        {
+          inherit supportedSystems nixpkgsArgs;
+          system = currentSystem;
+        }
+        // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
+      );
 
   inherit (release-lib) pkgs;
   inherit (lib) concatStringsSep isDerivation;
