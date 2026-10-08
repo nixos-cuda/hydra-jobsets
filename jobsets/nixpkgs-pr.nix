@@ -208,12 +208,16 @@ let
     )
   );
 
+  # Each diff also depends on the last report, so that the first of them evaluation asks for (as
+  # import-from-derivation) has all the reports built one after the other, rather than the reports
+  # it doesn't need waiting for it and its queries to be built.
   mkDiff =
     reportPre: reportPost:
-    pkgs.callPackage "${nixNixpkgsReview}/mkDiff.nix" {
+    (pkgs.callPackage "${nixNixpkgsReview}/mkDiff.nix" {
       name = "diff-${reportPre.name}-${reportPost.name}";
       inherit reportPre reportPost;
-    };
+    }).overrideAttrs
+      { after = (lib.last reports).report; };
 
   diffsBySystem = lib.mapAttrs (
     system: reports:
