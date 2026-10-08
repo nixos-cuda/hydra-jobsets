@@ -152,6 +152,8 @@ let
         args // { config = args.config // { cudaSupport = withCUDA; }; }
       '';
       nix = evalNix.outPath;
+      # Reports are only compared with each other, so cheaper fingerprints of derivation paths do
+      fingerprintDerivations = true;
     }).overrideAttrs
       (lib.optionalAttrs (after != null) { inherit after; });
 
