@@ -244,14 +244,12 @@ let
     );
 
   # Attribute paths added or changed in a diff, e.g. [ [ "blender" ] [ "zigPackages" "0.15" ] ].
-  # Report keys are attribute paths joined with "." (which is ambiguous), so the paths come from the
-  # entries of the newer report.
   addedOrChanged =
     diff:
-    query "${diff.name}-attrPaths" {
-      inherit diff;
-      report = diff.reportPost;
-    } "($diff[0].added + $diff[0].changed) | map($report[0][.].attrPath)";
+    let
+      inherit (lib.importJSON diff) added changed;
+    in
+    added ++ changed;
 
   # Attribute paths added or changed by the PR with cudaSupport, which are also either in one of the
   # cudaPackages sets, only present with cudaSupport enabled, or affected by enabling cudaSupport.
@@ -269,10 +267,13 @@ let
         noCuda = reports.mergeNoCuda;
         report = reports.mergeCuda;
       }
+      # A path may not exist in the report without cudaSupport, or go through a derivation there.
       ''
         ($pr[0].added + $pr[0].changed)
-        | map(select(startswith("cudaPackages") or $noCuda[0][.].drvPath != $report[0][.].drvPath))
-        | map($report[0][.].attrPath)
+        | map(select(
+            (.[0] | startswith("cudaPackages"))
+            or (. as $p | ($noCuda[0] | try getpath($p) catch null) != ($report[0] | getpath($p)))
+          ))
       '';
 
   toEntries =
@@ -388,7 +389,7 @@ let
                     echo "== ${system}, ${label}"
                     jq --raw-output '
                       "\(.added | length) added, \(.changed | length) changed, \(.removed | length) removed",
-                      (("added", "changed", "removed") as $k | select(.[$k] != []) | "\n\($k):", (.[$k][] | "  \(.)"))
+                      (("added", "changed", "removed") as $k | select(.[$k] != []) | "\n\($k):", (.[$k][] | "  \(join("."))"))
                     ' < ${diffs.${name}}
                     echo
                   } >> "$out/changes.txt"
