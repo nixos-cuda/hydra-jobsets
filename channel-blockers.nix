@@ -38,7 +38,6 @@ let
 
     # LLM
     "llama-cpp"
-    "mistral-rs"
     "ollama"
     # vllm < 0.20.0 has known vulnerabilities
     # TODO: re-enable when possible
@@ -75,5 +74,8 @@ in
     "cudaPackages_13_4.cudatoolkit"
   ];
   "nixos-26.05-cuda" = common ++ [
+    # Only adding it here as it is unavailable for CUDA 13.4
+    # TODO: re-enable when possible
+    "mistral-rs"
   ];
 }
