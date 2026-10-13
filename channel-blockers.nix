@@ -43,9 +43,16 @@ let
     # TODO: re-enable when possible
     #"python3Packages.vllm"
 
-    # Python / Deep Learning
+    # Python / CUDA
     "python3Packages.cuda-bindings"
     "python3Packages.cuda-bindings.gpuCheck"
+    "python3Packages.cuda-pathfinder"
+
+    # Python / Misc
+    "python3Packages.cupy"
+    "python3Packages.numba"
+
+    # Python / Deep Learning
     "python3Packages.jax"
     "python313Packages.tensorflow" # tensorflow is not abailable on python 3.14
     "python3Packages.tiny-cuda-nn"
@@ -72,6 +79,19 @@ in
     # Other cudaPackages versions
     "cudaPackages_13_3.cudatoolkit"
     "cudaPackages_13_4.cudatoolkit"
+
+    # Python / CUDA
+    "python3Packages.cuda-cccl"
+    "python3Packages.cuda-cccl.gpuCheck"
+    "python3Packages.cuda-core"
+    "python3Packages.cuda-core.gpuCheck"
+    "python3Packages.cuda-tile"
+    "python3Packages.cuda-tile.gpuCheck"
+    "python3Packages.nvidia-cutlass-dsl"
+
+    # Python / Misc
+    "python3Packages.numba-cuda"
+    "python3Packages.numba-cuda.gpuCheck"
   ];
   "nixos-26.05-cuda" = common ++ [
     # Only adding it here as it is unavailable for CUDA 13.4
