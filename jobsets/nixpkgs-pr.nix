@@ -1,9 +1,12 @@
 # Jobset that will be triggered on every PR in Nixpkgs.
 # We receive 2 Nixpkgs variants: one from target branch (e.g. master), another from the result of merging PR into it.
-# We evaluate 3 versions of Nixpkgs:
+# We evaluate 4 versions of Nixpkgs (with nix-nixpkgs-review):
 # - target branch with and without cudaSupport
-# - merge commit with cudaSupport
-# Then we collect only packages that are changed by this PR and are affected by enabling cudaSupport.
+# - merge commit with and without cudaSupport
+# Then we build packages changed by this PR:
+# - with cudaSupport, if they are in the cudaPackages set or affected by enabling cudaSupport
+# - without cudaSupport
+# The `pr-changes` job shows what the PR changed, with and without cudaSupport.
 # TODO:
 # - add all gpuChecks that are affected by the PR into this jobset
 {
@@ -22,6 +25,12 @@
   # Head of the target branch, should be trusted
   nixpkgs,
   targetBranch ? "master",
+
+  # https://github.com/ConnorBaker/nix-nixpkgs-review, which evaluates Nixpkgs and compares the results
+  nixNixpkgsReview,
+  # The Nix used by nixNixpkgsReview's evaluations, with Determinate Systems' parallel evaluator
+  # (a `build` input of the tools jobset)
+  evalNix,
   ...
 }@args:
 
@@ -40,7 +49,7 @@ let
   #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-7972-pg2x-xr59 (CVE-2026-27893)
   #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-83vm-p52w-f9pw (CVE-2026-44223)
   #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-hpv8-x276-m59f (CVE-2026-44222)
-  # Can't use allowInsecurePredicate because Nixpkgs ci/eval needs the config to be serializable to JSON
+  # Can't use allowInsecurePredicate because nix-nixpkgs-review's reports need the config to be serializable to JSON
   patchInsecurePackages =
     nixpkgsTree:
     pkgs.runCommand "patch-nixpkgs" { } ''
@@ -114,60 +123,164 @@ let
   # `false` to `true`
   ##########################################################
 
-  ciMerge = import "${nixpkgsMerge'}/ci" {
-    system = currentSystem;
-    nixpkgs = nixpkgsMerge';
-  };
-
-  ciHead = import "${nixpkgs'}/ci" {
-    system = currentSystem;
-    nixpkgs = nixpkgs';
-  };
-
   supportsCuda = lib.hasSuffix "-linux";
   supportedSystemsWithCuda = lib.filter supportsCuda supportedSystems;
 
-  # TODO: optimize the value of chunkSize for the hydra machine
-  baseline =
-    ci: withCuda:
-    (ci.eval {
-      extraNixpkgsConfig = if withCuda then nixpkgsConfig else nixpkgsConfig // { cudaSupport = false; };
-    }).baseline
-      { evalSystems = if withCuda then supportedSystemsWithCuda else supportedSystems; };
+  # nixNixpkgsReview's mkReport.nix evaluates Nixpkgs in a derivation (import-from-derivation),
+  # recording the derivation path of every attribute without instantiating anything, and
+  # mkDiff.nix lists the attributes added, changed, or removed between two such reports.
+  mkReport =
+    {
+      when,
+      tree,
+      system,
+      withCUDA,
+    }:
+    after:
+    (pkgs.callPackage "${nixNixpkgsReview}/mkReport.nix" {
+      name = "report-${when}${lib.optionalString withCUDA "-cuda"}-${system}";
+      nixpkgs = tree;
+      evalSystem = system;
+      inherit withCUDA;
+      withCA = false;
+      # Evaluate Nixpkgs exactly as release-lib does for the jobs we build
+      nixpkgsArgs = builtins.toFile "nixpkgs-args.nix" ''
+        { withCA, withCUDA }:
+        let
+          args = builtins.fromJSON ${builtins.toJSON (builtins.toJSON nixpkgsArgs)};
+        in
+        args // { config = args.config // { cudaSupport = withCUDA; }; }
+      '';
+      nix = evalNix.outPath;
+      # Reports are only compared with each other, so cheaper fingerprints of derivation paths do
+      fingerprintDerivations = true;
+    }).overrideAttrs
+      (lib.optionalAttrs (after != null) { inherit after; });
 
-  baselines = pkgs.linkFarm "baselines" {
-    headCuda = baseline ciHead true;
-    headNoCuda = baseline ciHead false;
-    mergeCuda = baseline ciMerge true;
-    mergeNoCuda = baseline ciMerge false;
-  };
-
-  # Taken from ci/eval/diff.nix
-  getAttrs =
-    dir: evalSystem:
-    let
-      raw = builtins.readFile "${dir}/${evalSystem}/paths.json";
-      # The file contains Nix paths; we need to ignore them for evaluation purposes,
-      # else there will be a "is not allowed to refer to a store path" error.
-      data = builtins.unsafeDiscardStringContext raw;
-    in
-    builtins.fromJSON data;
-
-  # Cache attrs for each package set + config + system
-  # { "x86_64-linux": { headCuda = ...; mergeCuda = ...; mergeNoCuda = ...; }; }
-  attrs = lib.genAttrs supportedSystems (
-    system:
-    lib.genAttrs (
+  # Every report uses every core and ~24G of memory, so each one depends on the one before it and
+  # Nix builds them one at a time. Reports for the target branch come first, so they only depend on
+  # the target branch and are shared by every PR (and push) with the same target branch commit.
+  # In build order: target branch, then merge commit; for each system, without and then with
+  # cudaSupport.
+  reportSpecs =
+    lib.concatMap
+      (
+        { when, tree }:
+        lib.concatMap (
+          system:
+          map (withCUDA: {
+            inherit
+              when
+              tree
+              system
+              withCUDA
+              ;
+          }) ([ false ] ++ lib.optional (supportsCuda system) true)
+        ) supportedSystems
+      )
       [
-        "headNoCuda"
-        "mergeNoCuda"
-      ]
-      ++ lib.optionals (supportsCuda system) [
-        "headCuda"
-        "mergeCuda"
-      ]
-    ) (name: getAttrs "${baselines}/${name}" system)
+        {
+          when = "head";
+          tree = nixpkgs';
+        }
+        {
+          when = "merge";
+          tree = nixpkgsMerge';
+        }
+      ];
+
+  # [ { when, tree, system, withCUDA, report } ], each report depending on the one before it.
+  reports = lib.foldl' (
+    previous: spec:
+    let
+      after = if previous == [ ] then null else (lib.last previous).report;
+    in
+    previous ++ [ (spec // { report = mkReport spec after; }) ]
+  ) [ ] reportSpecs;
+
+  # { x86_64-linux = { headNoCuda = <report>; headCuda = <report>; mergeNoCuda = <report>; mergeCuda = <report>; }; }
+  reportsBySystem = lib.genAttrs supportedSystems (
+    system:
+    lib.listToAttrs (
+      map (
+        spec: lib.nameValuePair (spec.when + (if spec.withCUDA then "Cuda" else "NoCuda")) spec.report
+      ) (lib.filter (spec: spec.system == system) reports)
+    )
   );
+
+  # Each diff also depends on the last report, so that the first of them evaluation asks for (as
+  # import-from-derivation) has all the reports built one after the other, rather than the reports
+  # it doesn't need waiting for it and its queries to be built.
+  mkDiff =
+    reportPre: reportPost:
+    (pkgs.callPackage "${nixNixpkgsReview}/mkDiff.nix" {
+      name = "diff-${reportPre.name}-${reportPost.name}";
+      inherit reportPre reportPost;
+    }).overrideAttrs
+      { after = (lib.last reports).report; };
+
+  diffsBySystem = lib.mapAttrs (
+    system: reports:
+    {
+      # What the PR changes without cudaSupport
+      prNoCuda = mkDiff reports.headNoCuda reports.mergeNoCuda;
+    }
+    // lib.optionalAttrs (supportsCuda system) {
+      # What the PR changes with cudaSupport
+      prCuda = mkDiff reports.headCuda reports.mergeCuda;
+    }
+  ) reportsBySystem;
+
+  # Runs jq over reports and diffs (each available as `$<name>[0]`), so evaluator workers only read
+  # the (small) result.
+  query =
+    name: inputs: filter:
+    lib.importJSON (
+      pkgs.runCommand name { nativeBuildInputs = [ pkgs.jq ]; } ''
+        jq --null-input ${
+          lib.concatStringsSep " " (lib.mapAttrsToList (input: path: "--slurpfile ${input} ${path}") inputs)
+        } ${lib.escapeShellArg filter} > "$out"
+      ''
+    );
+
+  # Attribute paths added or changed in a diff, e.g. [ [ "blender" ] [ "zigPackages" "0.15" ] ].
+  addedOrChanged =
+    diff:
+    let
+      inherit (lib.importJSON diff) added changed;
+    in
+    added ++ changed;
+
+  # Attribute paths added or changed by the PR with cudaSupport, which are also either in one of the
+  # cudaPackages sets, only present with cudaSupport enabled, or affected by enabling cudaSupport.
+  # Only the attributes the PR changed are compared between the reports with and without cudaSupport,
+  # rather than diffing the reports in full.
+  changedCudaPackages =
+    system:
+    let
+      diffs = diffsBySystem.${system};
+      reports = reportsBySystem.${system};
+    in
+    query "${diffs.prCuda.name}-cudaPackages"
+      {
+        pr = diffs.prCuda;
+        noCuda = reports.mergeNoCuda;
+        report = reports.mergeCuda;
+      }
+      # A path may not exist in the report without cudaSupport, or go through a derivation there.
+      ''
+        ($pr[0].added + $pr[0].changed)
+        | map(select(
+            (.[0] | startswith("cudaPackages"))
+            or (. as $p | ($noCuda[0] | try getpath($p) catch null) != ($report[0] | getpath($p)))
+          ))
+      '';
+
+  toEntries =
+    system:
+    map (path: {
+      inherit system path;
+    });
 
   # Collect all paths that changed between these into a form of a list:
   # [
@@ -180,64 +293,14 @@ let
   #   {system = "x86_64-linux"; path = ["cura-appimage"];}
   #   ...
   # ]
+  entriesCuda = lib.concatMap (
+    system: toEntries system (changedCudaPackages system)
+  ) supportedSystemsWithCuda;
 
-  entriesCuda = lib.concatLists (
-    lib.forEach supportedSystemsWithCuda (
-      system:
-      let
-        inherit (attrs.${system})
-          headCuda
-          mergeCuda
-          mergeNoCuda
-          ;
-        predicate =
-          name:
-          # Package must be added or changed in this PR
-          (!(headCuda ? ${name}) || (mergeCuda.${name} != headCuda.${name}))
-          # And must be one of:
-          && (
-            # in one of cudaPackages sets
-            (lib.hasPrefix "cudaPackages" name)
-            # only present with cudaSupport enabled
-            || !(mergeNoCuda ? ${name})
-            # affected by enabling cudaSupport
-            || (mergeCuda.${name} != mergeNoCuda.${name})
-          );
-        filtered = lib.filter predicate (lib.attrNames mergeCuda);
-      in
-      # Cut out "release-checks"
-      lib.filter (e: e.path != [ ]) (
-        map (pathStr: {
-          inherit system;
-          path = lib.init (lib.splitString "." pathStr);
-        }) filtered
-      )
-    )
-  );
-
-  entriesNoCuda = lib.concatLists (
-    lib.forEach supportedSystems (
-      system:
-      let
-        inherit (attrs.${system})
-          headNoCuda
-          mergeNoCuda
-          ;
-        predicate =
-          name:
-          # Package must be added or changed in this PR
-          (!(headNoCuda ? ${name}) || (mergeNoCuda.${name} != headNoCuda.${name}));
-        filtered = lib.filter predicate (lib.attrNames mergeNoCuda);
-      in
-      # Cut out "release-checks"
-      lib.filter (e: e.path != [ ]) (
-        map (pathStr: {
-          inherit system;
-          path = lib.init (lib.splitString "." pathStr);
-        }) filtered
-      )
-    )
-  );
+  # Packages added or changed by this PR without cudaSupport
+  entriesNoCuda = lib.concatMap (
+    system: toEntries system (addedOrChanged diffsBySystem.${system}.prNoCuda)
+  ) supportedSystems;
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
@@ -306,6 +369,47 @@ let
   prJobsNoCuda = mapTestOnWithSuffix releaseLibMergeNoCuda "nocuda" (entriesToAttrSet entriesNoCuda);
   prJobs = lib.recursiveUpdate prJobsCuda prJobsNoCuda;
 
+  # What the PR adds, changes, and removes, with and without cudaSupport, shown as a report on the
+  # build's page (and as JSON files).
+  prChanges =
+    pkgs.runCommand "pr-changes" { nativeBuildInputs = [ pkgs.jq ]; }
+      # bash
+      ''
+        mkdir -p "$out/nix-support"
+        ${lib.concatStrings (
+          lib.mapAttrsToList (
+            system: diffs:
+            lib.concatMapStrings
+              (
+                { name, label }:
+                lib.optionalString (diffs ? ${name}) ''
+                  install -Dm444 ${diffs.${name}} "$out/${system}/${name}.json"
+                  echo "file json $out/${system}/${name}.json" >> "$out/nix-support/hydra-build-products"
+                  {
+                    echo "== ${system}, ${label}"
+                    jq --raw-output '
+                      "\(.added | length) added, \(.changed | length) changed, \(.removed | length) removed",
+                      (("added", "changed", "removed") as $k | select(.[$k] != []) | "\n\($k):", (.[$k][] | "  \(join("."))"))
+                    ' < ${diffs.${name}}
+                    echo
+                  } >> "$out/changes.txt"
+                ''
+              )
+              [
+                {
+                  name = "prNoCuda";
+                  label = "without cudaSupport";
+                }
+                {
+                  name = "prCuda";
+                  label = "with cudaSupport";
+                }
+              ]
+          ) diffsBySystem
+        )}
+        echo "report changes $out changes.txt" >> "$out/nix-support/hydra-build-products"
+      '';
+
   branchToChannelMap = {
     master = "nixos-unstable-cuda";
     "release-26.05" = "nixos-26.05-cuda";
@@ -315,6 +419,8 @@ let
     supportedSystems = supportedSystemsWithCuda;
     nixpkgs = nixpkgsMerge';
     channelName = branchToChannelMap.${targetBranch};
+    # Same Nixpkgs and config as the PR's CUDA jobs, so evaluator workers share one CUDA package set
+    releaseLib = releaseLibMergeCuda;
   };
 
   # Explicitly specified platforms take precedence over the platforms
@@ -322,4 +428,4 @@ let
   jobs =
     if branchToChannelMap ? ${targetBranch} then lib.recursiveUpdate prJobs channelJobs else prJobs;
 in
-jobs
+jobs // { pr-changes = prChanges; }
