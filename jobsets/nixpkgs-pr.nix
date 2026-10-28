@@ -42,54 +42,16 @@ let
     overlays = [ ];
   };
 
-  # Ignore these known vulnerabilities for CI:
-  # - tensorrt:
-  #   - [CVE-2026-24188](https://github.com/NixOS/nixpkgs/issues/522570): OOB write
-  # - vllm:
-  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-7972-pg2x-xr59 (CVE-2026-27893)
-  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-83vm-p52w-f9pw (CVE-2026-44223)
-  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-hpv8-x276-m59f (CVE-2026-44222)
-  # Can't use allowInsecurePredicate because nix-nixpkgs-review's reports need the config to be serializable to JSON
-  patchInsecurePackages =
-    nixpkgsTree:
-    pkgs.runCommand "patch-nixpkgs" { } ''
-      cp -r ${nixpkgsTree} $out
-      substituteInPlace $out/pkgs/development/cuda-modules/packages/tensorrt.nix \
-        --replace-warn '"CVE-2026-24188: OOB write"' '''
-      substituteInPlace $out/pkgs/development/python-modules/vllm/default.nix \
-        --replace-warn '"CVE-2026-27893"' ''' \
-        --replace-warn '"CVE-2026-44223"' ''' \
-        --replace-warn '"CVE-2026-44222"' '''
-    '';
-  nixpkgs' = patchInsecurePackages nixpkgs;
-  nixpkgsMerge' = patchInsecurePackages nixpkgsMerge;
+  # The arguments Nixpkgs is imported with, as a function of { withCUDA, ... }: the same file configures the jobs
+  # (through release-lib) and the reports (as mkReport.nix's `nixpkgsArgs`).
+  nixpkgsArgsFile = ./nixpkgs-pr-args.nix;
+  nixpkgsArgsFor = withCUDA: import nixpkgsArgsFile { inherit withCUDA; };
 
   ##########################################################
   # STEP 1: Initialize release-lib
   ##########################################################
 
-  lib = import "${nixpkgs'}/lib";
-
-  nixpkgsConfig = {
-    # TODO: why not simply "allowUnfree = true"?
-    # allowUnfreePredicate =
-    #   let
-    #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-    #   in
-    #   cudaLib.allowUnfreeCudaPredicate;
-    allowUnfree = true;
-    cudaSupport = true;
-    inHydra = true;
-
-    # Don't evaluate duplicate and/or deprecated attributes
-    allowAliases = false;
-  };
-
-  # Attributes passed to nixpkgs.
-  nixpkgsArgs = {
-    config = nixpkgsConfig;
-    __allowFileset = false;
-  };
+  lib = import "${nixpkgs}/lib";
 
   # release-lib.nix provides tools to efficiently map jobs to the actual derivations (packages)
   # it memoizes packages sets for each platform, so we need to have multiple instances
@@ -98,22 +60,19 @@ let
   mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
   releaseLibMergeCuda = mkReleaseLib (
     {
-      inherit supportedSystems nixpkgsArgs;
+      inherit supportedSystems;
+      nixpkgsArgs = nixpkgsArgsFor true;
       system = currentSystem;
-      packageSet = import nixpkgsMerge';
+      packageSet = import nixpkgsMerge;
     }
     // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
   );
   releaseLibMergeNoCuda = mkReleaseLib (
     {
       inherit supportedSystems;
-      nixpkgsArgs = nixpkgsArgs // {
-        config = nixpkgsArgs.config // {
-          cudaSupport = false;
-        };
-      };
+      nixpkgsArgs = nixpkgsArgsFor false;
       system = currentSystem;
-      packageSet = import nixpkgsMerge';
+      packageSet = import nixpkgsMerge;
     }
     // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
   );
@@ -127,7 +86,7 @@ let
   supportedSystemsWithCuda = lib.filter supportsCuda supportedSystems;
 
   # nixNixpkgsReview's mkReport.nix evaluates Nixpkgs in a derivation (import-from-derivation),
-  # recording the derivation path of every attribute without instantiating anything, and
+  # recording the output path of every attribute without instantiating anything, and
   # mkDiff.nix lists the attributes added, changed, or removed between two such reports.
   mkReport =
     {
@@ -144,15 +103,9 @@ let
       inherit withCUDA;
       withCA = false;
       # Evaluate Nixpkgs exactly as release-lib does for the jobs we build
-      nixpkgsArgs = builtins.toFile "nixpkgs-args.nix" ''
-        { withCA, withCUDA }:
-        let
-          args = builtins.fromJSON ${builtins.toJSON (builtins.toJSON nixpkgsArgs)};
-        in
-        args // { config = args.config // { cudaSupport = withCUDA; }; }
-      '';
+      nixpkgsArgs = nixpkgsArgsFile;
       nix = evalNix.outPath;
-      # Reports are only compared with each other, so cheaper fingerprints of derivation paths do
+      # Reports are only compared with each other, so cheaper fingerprints of output paths do
       fingerprintDerivations = true;
     }).overrideAttrs
       (lib.optionalAttrs (after != null) { inherit after; });
@@ -181,11 +134,11 @@ let
       [
         {
           when = "head";
-          tree = nixpkgs';
+          tree = nixpkgs;
         }
         {
           when = "merge";
-          tree = nixpkgsMerge';
+          tree = nixpkgsMerge;
         }
       ];
 
@@ -417,7 +370,7 @@ let
   channelJobs = import ./cuda-channel/default.nix {
     inherit currentSystem;
     supportedSystems = supportedSystemsWithCuda;
-    nixpkgs = nixpkgsMerge';
+    nixpkgs = nixpkgsMerge;
     channelName = branchToChannelMap.${targetBranch};
     # Same Nixpkgs and config as the PR's CUDA jobs, so evaluator workers share one CUDA package set
     releaseLib = releaseLibMergeCuda;
