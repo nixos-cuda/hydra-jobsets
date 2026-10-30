@@ -10,7 +10,7 @@
   # The platforms supported by the NixOS-CUDA Hydra instance
   supportedSystems ? [
     "x86_64-linux"
-    # "aarch64-linux"
+    "aarch64-linux"
     # "aarch64-darwin"
   ],
   # The system evaluating this expression

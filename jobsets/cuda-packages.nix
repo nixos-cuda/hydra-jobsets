@@ -2,7 +2,7 @@
   # The platforms supported by the NixOS-CUDA Hydra instance
   supportedSystems ? [
     "x86_64-linux"
-    # "aarch64-linux"
+    "aarch64-linux"
   ],
   # The system evaluating this expression
   # TODO: automatically detect?
