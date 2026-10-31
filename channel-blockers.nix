@@ -23,7 +23,10 @@ let
     "blender"
     "blender.tests.tester-cudaAvailable.gpuCheck"
     "firefox-unwrapped" # depends on onnxruntime
-    "tiny-cuda-nn"
+    {
+      path = "tiny-cuda-nn";
+      platforms = [ "x86_64-linux" ];
+    }
     "python3Packages.nvidia-ml-py.tests.tester-nvmlInit.gpuCheck"
 
     # ONNX
@@ -54,8 +57,14 @@ let
 
     # Python / Deep Learning
     "python3Packages.jax"
-    "python313Packages.tensorflow" # tensorflow is not abailable on python 3.14
-    "python3Packages.tiny-cuda-nn"
+    {
+      path = "python313Packages.tensorflow"; # tensorflow is not abailable on python 3.14
+      platforms = [ "x86_64-linux" ];
+    }
+    {
+      path = "python3Packages.tiny-cuda-nn";
+      platforms = [ "x86_64-linux" ];
+    }
     "python3Packages.tinygrad"
     "python3Packages.tinygrad.gpuCheck"
     "python3Packages.tinygrad.tests.withCuda.gpuCheck"

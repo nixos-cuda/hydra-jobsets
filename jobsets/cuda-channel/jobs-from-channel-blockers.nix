@@ -23,6 +23,9 @@ let
     pipe
     splitString
     tail
+    isList
+    isString
+    elemAt
     ;
 
   /*
@@ -32,14 +35,20 @@ let
       "opencv"
       "python3Packages.torch"
       "python3Packages.torch.tests.tester-compileCpu.gpuCheck"
+      { path = "python3Packages.triton"; platforms = [ "x86_64-linux" ]; }
     ]
 
     To:
     {
       firefox.x86_64-linux = <drv>;
+      firefox.aarch64-linux = <drv>;
       opencv.x86_64-linux = <drv>;
+      opencv.aarch64-linux = <drv>;
       python3Packages.torch.x86_64-linux = <drv>;
+      python3Packages.torch.aarch64-linux = <drv>;
       python3Packages.torch.tests.tester-compileCpu.gpuCheck.x86_64-linux = <drv>;
+      python3Packages.torch.tests.tester-compileCpu.gpuCheck.aarch64-linux = <drv>;
+      python3Packages.triton.x86_64-linux = <drv>;
     }
   */
 
@@ -51,11 +60,11 @@ let
           firefox = [ [ "firefox" ] ];
           python3Packages = [
             [ "python3Packages" "torch" ]
-            [ "python3Packages" "triton" ]
+            { path = [ "python3Packages" "triton" ]; platforms = [ "x86_64-linux" ]; }
           ];
         }
       */
-      (groupBy head)
+      (groupBy (x: if isList x then head x else head x.path))
 
       /*
         {
@@ -66,7 +75,19 @@ let
           ];
         }
       */
-      (mapAttrs (_: map tail))
+      (mapAttrs (
+        _:
+        map (
+          x:
+          if isList x then
+            tail x
+          else
+            {
+              path = tail x.path;
+              inherit (x) platforms;
+            }
+        )
+      ))
     ];
 
   entriesToAttrSet =
@@ -75,16 +96,16 @@ let
       # python3Packages
       attrName:
 
-      # [ ["torch"] ["torch.tests.gpuCheck"] ["triton"] ]
+      # [ ["torch"] ["torch.tests.gpuCheck"] { path = ["triton"]; platforms = [ "aarch64-linux" ]; } ]
       entries:
       let
         /*
           {
             right = [];
-            wrong = [ ["torch"] ["torch.tests.gpuCheck"] ["triton"] ];
+            wrong = [ ["torch"] ["torch.tests.gpuCheck"] { path = ["triton"]; platforms = [ "aarch64-linux" ]; } ];
           }
         */
-        byLeaf = partition (entry: entry == [ ]) entries;
+        byLeaf = partition (entry: if isList entry then entry == [ ] else entry.path == [ ]) entries;
 
         # ["python3Packages" "torch" ]
         currentPath = path ++ [ attrName ];
@@ -93,6 +114,8 @@ let
 
         # pkgs.python3Packages.torch
         package = getAttrFromPath currentPath pkgs;
+        rightElement = elemAt byLeaf.right 0;
+        platforms = if rightElement == [ ] then getPlatforms package else rightElement.platforms;
 
         /*
           {
@@ -100,7 +123,7 @@ let
             aarch64-linux = <pkgs-aarch64-linux>.python3Packages.torch;
           };
         */
-        packageJobs = forMatchingSystems (getPlatforms package) (
+        packageJobs = forMatchingSystems platforms (
           system:
           let
             # <pkgs-system>.python3Packages.torch;
@@ -118,7 +141,10 @@ let
   jobs = (
     pipe channelBlockers [
       # [ [ "python3Packages" "torch" ] [ "firefox" ] ]
-      (map (pathStr: splitString "." pathStr))
+      (map (
+        entry:
+        if isString entry then splitString "." entry else entry // { path = splitString "." entry.path; }
+      ))
 
       (entriesToAttrSet [ ])
     ]
