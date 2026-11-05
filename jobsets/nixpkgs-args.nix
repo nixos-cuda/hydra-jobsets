@@ -1,6 +1,6 @@
 # The arguments the CUDA packages (./cuda-packages.nix), GPU checks (./cuda-tests.nix) and channel (./cuda-channel)
-# jobsets import Nixpkgs with: for their jobs, through release-lib, and for nix-nixpkgs-review's reports, whose
-# evaluation imports this file as their `nixpkgsArgs` (which is passed `withCA` as well).
+# jobsets import Nixpkgs with for their jobs, through release-lib. Their reports use ./report-args.nix and
+# ./gpu-report-args.nix.
 { withCUDA, ... }:
 {
   config = {
