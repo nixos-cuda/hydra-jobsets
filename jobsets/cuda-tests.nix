@@ -56,6 +56,13 @@ let
   # `gpuCheck` (eval/tests.nix there). Its report has every job's attribute path, outputs and `requiredSystemFeatures`.
   nixNixpkgsReviewLib = pkgs.callPackage "${nixNixpkgsReview}/lib.nix" { inherit iets; };
 
+  # A report with tests is the most memory-hungry evaluation here: iets can't free what it has evaluated, and with all
+  # tests, one process of 8 threads peaked at 31.1 GB (nixpkgs ae2b13d55ef7, x86_64-linux, 25.5 s on 20 aarch64-linux
+  # cores). So:
+  # - skipTests: the test sets that allocate the most and have no GPU check. With them skipped, the peak was 22.4 GB in
+  #   18.9 s, with the same GPU checks found.
+  # - workers and maxMemorySize: 4 processes, each replaced once over 4096 MB, so that the report fits in ~16 GB, like
+  #   the reports of the other jobsets.
   reports = map (
     system:
     nixNixpkgsReviewLib.mkReport {
@@ -64,6 +71,14 @@ let
       evalSystem = system;
       withCUDA = true;
       tests = true;
+      skipTests = {
+        # .NET SDK tests (buildDotnetModule, ...): 1482 tests, a third of the tests' allocations (15.3 GB).
+        dotnetCorePackages = true;
+        # 205 tests, the next most (6.3 GB).
+        azure-cli-extensions = true;
+      };
+      workers = 4;
+      maxMemorySize = 4096;
       nixpkgsArgs = nixpkgsArgsFile;
     }
   ) supportedSystems;
