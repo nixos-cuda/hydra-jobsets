@@ -98,33 +98,37 @@ let
       system,
       withCUDA,
     }:
-    after:
     nixNixpkgsReviewLib.mkReport {
       label = "${when}${lib.optionalString withCUDA "-cuda"}-${system}";
-      inherit tree withCUDA after;
+      inherit tree withCUDA;
       evalSystem = system;
       # Evaluate Nixpkgs exactly as release-lib does for the jobs we build
       nixpkgsArgs = nixpkgsArgsFile;
     };
 
-  # Every report uses 8 cores and tens of GB of memory, so each one depends on the one before it and Nix builds them
-  # one at a time. Reports for the target branch come first, so they only depend on the target branch and are shared
-  # by every PR (and push) with the same target branch commit. In build order: target branch, then merge commit; for
-  # each system, without and then with cudaSupport.
-  reportSpecs =
+  # The reports: target branch and merge commit; for each system, without and with cudaSupport. Each is its own
+  # derivation, depending only on its tree and settings, so the target branch's are shared by every PR (and push)
+  # with the same target branch commit.
+  reports =
     lib.concatMap
       (
         { when, tree }:
         lib.concatMap (
           system:
-          map (withCUDA: {
-            inherit
-              when
-              tree
-              system
-              withCUDA
-              ;
-          }) ([ false ] ++ lib.optional (supportsCuda system) true)
+          map (
+            withCUDA:
+            let
+              spec = {
+                inherit
+                  when
+                  tree
+                  system
+                  withCUDA
+                  ;
+              };
+            in
+            spec // { report = mkReport spec; }
+          ) ([ false ] ++ lib.optional (supportsCuda system) true)
         ) supportedSystems
       )
       [
@@ -138,15 +142,6 @@ let
         }
       ];
 
-  # [ { when, tree, system, withCUDA, report } ], each report depending on the one before it.
-  reports = lib.foldl' (
-    previous: spec:
-    let
-      after = if previous == [ ] then null else (lib.last previous).report;
-    in
-    previous ++ [ (spec // { report = mkReport spec after; }) ]
-  ) [ ] reportSpecs;
-
   # { x86_64-linux = { headNoCuda = <report>; headCuda = <report>; mergeNoCuda = <report>; mergeCuda = <report>; }; }
   reportsBySystem = lib.genAttrs supportedSystems (
     system:
@@ -157,15 +152,15 @@ let
     )
   );
 
-  # The diff of two reports (a file). Each also depends on the last report, so that the first of them evaluation asks
-  # for (as import-from-derivation) has all the reports built one after the other, rather than the reports it doesn't
-  # need waiting for it and its queries to be built.
+  # The diff of two reports (a file). Each also depends on every report, so that the first diff evaluation reads (as
+  # import-from-derivation) has Nix build all the reports at once, as many in parallel as Hydra's `--max-jobs`
+  # (`evaluator_max_jobs`) allows, rather than each read waiting for the reports it needs.
   mkDiff =
     pre: post:
     "${
       nixNixpkgsReviewLib.mkJobs {
         inherit pre post;
-        after = (lib.last reports).report;
+        after = map (spec: spec.report) reports;
       }
     }/diff.json";
 
