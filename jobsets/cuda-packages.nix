@@ -60,6 +60,7 @@ let
       mkReport =
         withCUDA:
         nixNixpkgsReviewLib.mkReport {
+          label = "${if withCUDA then "cuda" else "noCuda"}-${system}";
           tree = nixpkgs;
           evalSystem = system;
           inherit withCUDA;

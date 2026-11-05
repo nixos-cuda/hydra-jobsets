@@ -85,14 +85,15 @@ let
 
   # The reports, per system: the target branch (head) and merge commit, without and with cudaSupport, e.g.
   # { x86_64-linux = { headNoCuda = <report>; headCuda = <report>; mergeNoCuda = <report>; mergeCuda = <report>; }; }
-  # Each is its own derivation, named after its commit and settings, so the target branch's are shared by every PR (and
-  # push) with the same target branch commit, and with the CUDA packages jobset (./cuda-packages.nix) for that commit.
+  # Each is its own derivation, depending only on its tree and settings, so the target branch's are shared by every PR
+  # (and push) with the same target branch commit.
   reportsBySystem = lib.genAttrs supportedSystems (
     system:
     let
       mkReport =
-        tree: withCUDA:
+        when: tree: withCUDA:
         nixNixpkgsReviewLib.mkReport {
+          label = "${when}${lib.optionalString withCUDA "-cuda"}-${system}";
           inherit tree withCUDA;
           evalSystem = system;
           nixpkgsArgs = ./report-args.nix;
@@ -100,12 +101,12 @@ let
         };
     in
     {
-      headNoCuda = mkReport nixpkgs false;
-      mergeNoCuda = mkReport nixpkgsMerge false;
+      headNoCuda = mkReport "head" nixpkgs false;
+      mergeNoCuda = mkReport "merge" nixpkgsMerge false;
     }
     // lib.optionalAttrs (supportsCuda system) {
-      headCuda = mkReport nixpkgs true;
-      mergeCuda = mkReport nixpkgsMerge true;
+      headCuda = mkReport "head" nixpkgs true;
+      mergeCuda = mkReport "merge" nixpkgsMerge true;
     }
   );
 

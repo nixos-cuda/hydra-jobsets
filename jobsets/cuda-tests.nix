@@ -73,6 +73,7 @@ let
     system:
     let
       report = nixNixpkgsReviewLib.mkReport {
+        label = "tests-cuda-${system}";
         tree = nixpkgs;
         evalSystem = system;
         withCUDA = true;
