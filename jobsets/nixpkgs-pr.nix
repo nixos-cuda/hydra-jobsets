@@ -188,18 +188,34 @@ let
       ''
     );
 
-  # Attribute paths of the jobs a diff adds, changes or fixes (that failed to evaluate before), e.g.
-  # [ [ "blender" ] [ "zigPackages" "0.15" ] ].
-  toBuild =
-    diff:
-    let
-      inherit (lib.importJSON diff) added changed fixed;
-    in
-    added ++ changed ++ fixed;
+  # jq functions: `builtOn`, whether Hydra builds the job at an attribute path (as JSON) for $system, as Nixpkgs'
+  # release.nix decides: unless its `meta.hydraPlatforms`, as a report has it, leaves the system out. $hydraPlatforms is
+  # from `hydraPlatformsOf`, of a report.
+  jqBuiltOn = ''
+    def hydraPlatformsOf: map(select(.hydraPlatforms) | { key: (.attrPath | tojson), value: .hydraPlatforms }) | from_entries;
+    def builtOn($hydraPlatforms; $system): $hydraPlatforms[.] | . == null or any(. == $system);
+  '';
 
-  # Attribute paths added, changed or fixed by the PR with cudaSupport, which are also either in one of the
-  # cudaPackages sets, only jobs with cudaSupport enabled, or affected by enabling cudaSupport. Only the attributes the
-  # PR changed are compared between the reports with and without cudaSupport, rather than diffing the reports in full.
+  # Attribute paths of the jobs the PR adds, changes or fixes (that failed to evaluate before) without cudaSupport on a
+  # system, that Hydra builds for it, e.g. [ [ "blender" ] [ "zigPackages" "0.15" ] ].
+  changedPackages =
+    system:
+    query "pr-${system}"
+      {
+        pr = diffsBySystem.${system}.prNoCuda;
+        post = reportsBySystem.${system}.mergeNoCuda;
+      }
+      ''
+        ${jqBuiltOn}
+        ($post | hydraPlatformsOf) as $hydraPlatforms
+        | $pr[0] | .added + .changed + .fixed
+        | map(select(tojson | builtOn($hydraPlatforms; "${system}")))
+      '';
+
+  # Attribute paths added, changed or fixed by the PR with cudaSupport, that Hydra builds for the system, which are also
+  # either in one of the cudaPackages sets, only jobs with cudaSupport enabled, or affected by enabling cudaSupport. Only
+  # the attributes the PR changed are compared between the reports with and without cudaSupport, rather than diffing
+  # the reports in full.
   changedCudaPackages =
     system:
     let
@@ -214,9 +230,11 @@ let
       # outputsOf: the outputs of the jobs in a report whose attribute paths (as JSON) are in $want; a path that isn't a
       # job there (it's missing, or failed to evaluate) is null.
       ''
+        ${jqBuiltOn}
         def outputsOf($want):
           reduce (.[] | select($want[.attrPath | tojson])) as $l ({}; .[$l.attrPath | tojson] = $l.outputs);
-        ($pr[0] | .added + .changed + .fixed) as $paths
+        ($cuda | hydraPlatformsOf) as $hydraPlatforms
+        | ($pr[0] | .added + .changed + .fixed | map(select(tojson | builtOn($hydraPlatforms; "${system}")))) as $paths
         | ($paths | map({ key: tojson, value: true }) | from_entries) as $want
         | ($noCuda | outputsOf($want)) as $noCuda
         | ($cuda | outputsOf($want)) as $cuda
@@ -246,9 +264,7 @@ let
   ) supportedSystemsWithCuda;
 
   # Packages added, changed or fixed by this PR without cudaSupport
-  entriesNoCuda = lib.concatMap (
-    system: toEntries system (toBuild diffsBySystem.${system}.prNoCuda)
-  ) supportedSystems;
+  entriesNoCuda = lib.concatMap (system: toEntries system (changedPackages system)) supportedSystems;
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
@@ -299,7 +315,9 @@ let
     ) (groupEntries entries);
 
   # Like mapTestOn, only adds one more attrset layer, so that we can
-  # distinguish builds with and without CUDA support
+  # distinguish builds with and without CUDA support. Functions get no job: a report has the derivation a function
+  # returns when called with its defaults (e.g. `wrapOBS`), as nix-eval-jobs does, but Nixpkgs' release.nix makes no job
+  # of a function.
   mapTestOnWithSuffix =
     releaseLib: suffix:
     let
@@ -308,9 +326,15 @@ let
     lib.mapAttrsRecursive (
       #path: metaPatterns: releaseLib.testOn metaPatterns (pkgs: lib.getAttrFromPath path pkgs)
       path: metaPatterns:
-      forMatchingSystems metaPatterns (system: {
-        ${suffix} = hydraJob' (lib.getAttrFromPath path (pkgsFor system));
-      })
+      forMatchingSystems metaPatterns (
+        system:
+        let
+          value = lib.getAttrFromPath path (pkgsFor system);
+        in
+        lib.optionalAttrs (!lib.isFunction value) {
+          ${suffix} = hydraJob' value;
+        }
+      )
     );
 
   prJobsCuda = mapTestOnWithSuffix releaseLibMergeCuda "cuda" (entriesToAttrSet entriesCuda);

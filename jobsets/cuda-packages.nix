@@ -10,6 +10,12 @@
 
   # The nixpkgs instance
   nixpkgs,
+
+  # https://github.com/ConnorBaker/nix-nixpkgs-review, which evaluates Nixpkgs and compares the results
+  nixNixpkgsReview,
+  # The Nix evaluator nixNixpkgsReview's evaluations run with, built for `currentSystem` (a `build` input: the tools
+  # jobset's `iets.<system>`)
+  iets,
   ...
 }@args:
 
@@ -21,30 +27,14 @@ let
   lib = import "${nixpkgs}/lib";
   mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
 
-  nixpkgsConfig = {
-    # TODO: why not simply "allowUnfree = true"?
-    # allowUnfreePredicate =
-    #   let
-    #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-    #   in
-    #   cudaLib.allowUnfreeCudaPredicate;
-    allowUnfree = true;
-    cudaSupport = true;
-    inHydra = true;
-
-    # Don't evaluate duplicate and/or deprecated attributes
-    allowAliases = false;
-  };
-
-  # Attributes passed to nixpkgs.
-  nixpkgsArgs = {
-    config = nixpkgsConfig;
-    __allowFileset = false;
-  };
+  # The arguments Nixpkgs is imported with, as a function of { withCUDA, ... }: the same file configures the jobs
+  # (through release-lib) and the reports (as nix-nixpkgs-review's `nixpkgsArgs`).
+  nixpkgsArgsFile = ./nixpkgs-args.nix;
 
   release-lib = mkReleaseLib (
     {
-      inherit supportedSystems nixpkgsArgs;
+      inherit supportedSystems;
+      nixpkgsArgs = import nixpkgsArgsFile { withCUDA = true; };
       system = currentSystem;
     }
     // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
@@ -55,60 +45,66 @@ let
   # `false` to `true`
   ##########################################################
 
-  ci = import "${nixpkgs}/ci" {
+  # Used for simple IFDs
+  pkgs = import nixpkgs {
     system = currentSystem;
-    inherit nixpkgs;
+    config = { };
+    overlays = [ ];
   };
 
-  # TODO: optimize the value of chunkSize for the hydra machine
-  evalCudaSupportFalse = ci.eval {
-    extraNixpkgsConfig = nixpkgsConfig // {
-      cudaSupport = false;
-    };
-  };
-  evalCudaSupportTrue = ci.eval { extraNixpkgsConfig = nixpkgsConfig; };
+  # nixNixpkgsReview's mkReport evaluates Nixpkgs in a derivation (import-from-derivation) with iets' eval-jobs,
+  # recording the output paths of every job, and the error of every attribute that fails to evaluate, without
+  # instantiating anything. mkJobs compares two reports: its diff.json lists the attribute paths added, changed,
+  # removed, broken and fixed.
+  nixNixpkgsReviewLib = pkgs.callPackage "${nixNixpkgsReview}/lib.nix" { inherit iets; };
 
-  # These produce a symlink tree like this:
-  # - x86_64-linux
-  #   - paths.json
-  #   - <other uninteresting stuff>
-  # - aarch64-linux
-  #   - paths.json
-  #   - ...
-  #
-  # Where paths.json looks like this:
-  #
-  # {
-  #   "AMB-plugins.x86_64-linux": {
-  #     "out": "/nix/store/1kfkni7mvz0ak3pkgq38axy6qwfp2kdz-AMB-plugins-0.8.1"
-  #   },
-  #   "ArchiSteamFarm.x86_64-linux": {
-  #     "out": "/nix/store/8lj39bhsxs6hl5whdv6qz280xz71v9i2-ArchiSteamFarm-6.3.1.4"
-  #   },
-  #   "CuboCore.coreaction.x86_64-linux": {
-  #     "out": "/nix/store/zw4wdd4s0qaw24hysqvj1zr150pfr2y9-coreaction-5.0.0"
-  #   },
-  #   "CuboCore.corearchiver.x86_64-linux": {
-  #     "out": "/nix/store/nlr70m9iympiaqzwy07wbpcyh2hkzdc0-corearchiver-5.0.0"
-  #   },
-  #   ...
-  # }
+  # Per system: Nixpkgs without and with cudaSupport, evaluated exactly as release-lib does for the jobs.
+  reports = lib.genAttrs supportedSystems (
+    system:
+    lib.genAttrs [ "noCuda" "cuda" ] (
+      variant:
+      nixNixpkgsReviewLib.mkReport {
+        label = "${variant}-${system}";
+        tree = nixpkgs;
+        evalSystem = system;
+        withCUDA = variant == "cuda";
+        nixpkgsArgs = nixpkgsArgsFile;
+      }
+    )
+  );
 
-  baselineCudaSupportFalse = evalCudaSupportFalse.baseline { evalSystems = supportedSystems; };
-  baselineCudaSupportTrue = evalCudaSupportTrue.baseline { evalSystems = supportedSystems; };
+  # What enabling cudaSupport changes, per system (a file). Each diff also depends on every report, so that the first
+  # diff evaluation reads (as import-from-derivation) has Nix build all the reports at once, as many in parallel as
+  # Hydra's `--max-jobs` (`evaluator_max_jobs`) allows.
+  diffs = lib.mapAttrs (
+    system: systemReports:
+    "${
+      nixNixpkgsReviewLib.mkJobs {
+        pre = systemReports.noCuda;
+        post = systemReports.cuda;
+        after = lib.concatMap lib.attrValues (lib.attrValues reports);
+      }
+    }/diff.json"
+  ) reports;
 
-  # Taken from ci/eval/diff.nix
-  getAttrs =
-    dir: evalSystem:
-    let
-      raw = builtins.readFile "${dir}/${evalSystem}/paths.json";
-      # The file contains Nix paths; we need to ignore them for evaluation purposes,
-      # else there will be a "is not allowed to refer to a store path" error.
-      data = builtins.unsafeDiscardStringContext raw;
-    in
-    builtins.fromJSON data;
+  # The attribute paths added, changed, or fixed (that fail to evaluate without cudaSupport) by enabling cudaSupport on
+  # a system, that Hydra builds for it: as Nixpkgs' release.nix does, not those whose `meta.hydraPlatforms` (as the
+  # report with cudaSupport has it) leaves the system out. Read by jq, so evaluation only reads the (small) result.
+  toBuild =
+    system:
+    lib.importJSON (
+      pkgs.runCommand "cuda-packages-${system}" { nativeBuildInputs = [ pkgs.jq ]; } ''
+        jq --null-input --arg system ${system} \
+          --slurpfile diff ${diffs.${system}} --slurpfile post ${reports.${system}.cuda} '
+            ($post | map(select(.hydraPlatforms) | { key: (.attrPath | tojson), value: .hydraPlatforms }) | from_entries)
+              as $hydraPlatforms
+            | $diff[0] | .added + .changed + .fixed
+            | map(select(tojson as $k | $hydraPlatforms[$k] | . == null or any(. == $system)))
+          ' > "$out"
+      ''
+    );
 
-  # Collect all paths that changed between these into a form of a list:
+  # Collect all paths to build into a form of a list:
   # [
   #   {system = "x86_64-linux"; path = ["csxcad"];}
   #   {system = "x86_64-linux"; path = ["ctranslate2"];}
@@ -119,25 +115,9 @@ let
   #   {system = "x86_64-linux"; path = ["cura-appimage"];}
   #   ...
   # ]
-
-  entries = lib.concatLists (
-    lib.forEach supportedSystems (
-      system:
-      let
-        before = getAttrs baselineCudaSupportFalse system;
-        after = getAttrs baselineCudaSupportTrue system;
-        isAddedOrChanged = name: !(before ? ${name}) || (after.${name} != before.${name});
-        addedOrChanged = lib.filter isAddedOrChanged (lib.attrNames after);
-      in
-      # Cut out "release-checks"
-      lib.filter (e: e.path != [ ]) (
-        map (pathStr: {
-          inherit system;
-          path = lib.init (lib.splitString "." pathStr);
-        }) addedOrChanged
-      )
-    )
-  );
+  entries = lib.concatMap (
+    system: map (path: { inherit system path; }) (toBuild system)
+  ) supportedSystems;
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
@@ -180,8 +160,20 @@ let
 
   allPackagePlatforms = entriesToAttrSet entries;
 
-  # Explicitly specified platforms take precedence over the platforms
-  # automatically inferred in autoPackagePlatforms
-  jobs = release-lib.mapTestOn allPackagePlatforms;
+  # release-lib's mapTestOn, without the functions: a report has the derivation a function returns when called with
+  # its defaults (e.g. `wrapOBS`), as nix-eval-jobs does, but Nixpkgs' release.nix makes no job of a function.
+  inherit (release-lib) forMatchingSystems hydraJob' pkgsFor;
+  jobs = lib.mapAttrsRecursive (
+    path: systems:
+    lib.filterAttrs (_: job: job != null) (
+      forMatchingSystems systems (
+        system:
+        let
+          value = lib.getAttrFromPath path (pkgsFor system);
+        in
+        if lib.isFunction value then null else hydraJob' value
+      )
+    )
+  ) allPackagePlatforms;
 in
 jobs

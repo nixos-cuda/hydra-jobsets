@@ -17,6 +17,19 @@ let
     "26.05" = "nixos-26.05-small";
   };
 
+  # What the jobsets that evaluate Nixpkgs with nix-nixpkgs-review take: its library, and iets, the evaluator its
+  # reports run, built by the `tools` jobset below for the system Hydra evaluates on.
+  nixNixpkgsReviewInputs = {
+    nixNixpkgsReview = {
+      type = "git";
+      value = "https://github.com/ConnorBaker/nix-nixpkgs-review";
+    };
+    iets = {
+      type = "build";
+      value = "nixos-cuda:tools:iets.x86_64-linux";
+    };
+  };
+
   mkJobset =
     {
       nixpkgsRelease,
@@ -53,11 +66,13 @@ let
         description = "Run GPU Tests";
         definitionFile = "cuda-tests.nix";
         nixpkgsRelease = "unstable";
+        extraInputs = nixNixpkgsReviewInputs;
       };
       "cuda-gpu-checks-26.05" = {
         description = "Run GPU Tests";
         definitionFile = "cuda-tests.nix";
         nixpkgsRelease = "26.05";
+        extraInputs = nixNixpkgsReviewInputs;
       };
 
       # PACKAGES
@@ -65,11 +80,13 @@ let
         description = "All nixpkgs cudaSupport-sensitive packages";
         definitionFile = "cuda-packages.nix";
         nixpkgsRelease = "unstable";
+        extraInputs = nixNixpkgsReviewInputs;
       };
       "cuda-packages-26.05" = {
         description = "All nixpkgs cudaSupport-sensitive packages";
         definitionFile = "cuda-packages.nix";
         nixpkgsRelease = "26.05";
+        extraInputs = nixNixpkgsReviewInputs;
       };
 
       # CHANNELS
