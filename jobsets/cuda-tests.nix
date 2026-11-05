@@ -61,8 +61,9 @@ let
   # cores). So:
   # - skipTests: the test sets that allocate the most and have no GPU check. With them skipped, the peak was 22.4 GB in
   #   18.9 s, with the same GPU checks found.
-  # - workers and maxMemorySize: 4 processes, each replaced once over 4096 MB, so that the report fits in ~16 GB, like
-  #   the reports of the other jobsets.
+  # - workers and maxMemorySize: 8 processes, each replaced once over 2048 MB, so that the report fits in ~16 GB, like
+  #   the reports of the other jobsets. With the skip, 8 x 2048 MB peaked at 15.2 GB in 25.8 s, as fast as one process
+  #   with all tests; 4 x 4096 MB at 15.8 GB in 33.0 s (and twice as long as one process on the Hydra host).
   reports = map (
     system:
     nixNixpkgsReviewLib.mkReport {
@@ -77,8 +78,8 @@ let
         # 205 tests, the next most (6.3 GB).
         azure-cli-extensions = true;
       };
-      workers = 4;
-      maxMemorySize = 4096;
+      workers = 8;
+      maxMemorySize = 2048;
       nixpkgsArgs = nixpkgsArgsFile;
     }
   ) supportedSystems;
