@@ -19,12 +19,6 @@ let
 in
 {
   config = {
-    # TODO: why not simply "allowUnfree = true"?
-    # allowUnfreePredicate =
-    #   let
-    #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-    #   in
-    #   cudaLib.allowUnfreeCudaPredicate;
     allowUnfree = true;
     cudaSupport = withCUDA;
     inHydra = true;

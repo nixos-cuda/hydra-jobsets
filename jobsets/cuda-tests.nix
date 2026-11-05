@@ -13,8 +13,8 @@
 
   # https://github.com/ConnorBaker/nix-nixpkgs-review, which evaluates Nixpkgs and its tests
   nixNixpkgsReview,
-  # The Nix evaluator nixNixpkgsReview's evaluations run with, built for `currentSystem` (a `build` input: the tools
-  # jobset's `iets.<system>`)
+  # The Nix evaluator nixNixpkgsReview's evaluations run with (a `build` input: the tools jobset's iets, for the system
+  # Hydra evaluates on)
   iets,
   ...
 }@args:
@@ -53,17 +53,14 @@ let
 
   # nixNixpkgsReview's mkReport evaluates Nixpkgs in a derivation (import-from-derivation) with iets' eval-jobs. With
   # `tests`, it also walks every package's tests: its `passthru.tests`, its `passthru.gpuCheck`, and each test's
-  # `gpuCheck` (eval/tests.nix there). Its report has every job's attribute path, outputs and `requiredSystemFeatures`.
+  # `gpuCheck` (eval/tests.nix there). `apply` adds each job's `requiredSystemFeatures` to the report.
   nixNixpkgsReviewLib = pkgs.callPackage "${nixNixpkgsReview}/lib.nix" { inherit iets; };
 
-  # A report with tests is the most memory-hungry evaluation here: iets can't free what it has evaluated, and with all
-  # tests, one process of 8 threads peaked at 31.1 GB (nixpkgs ae2b13d55ef7, x86_64-linux, 25.5 s on 20 aarch64-linux
-  # cores). So:
-  # - skipTests: the test sets that allocate the most and have no GPU check. With them skipped, the peak was 22.4 GB in
-  #   18.9 s, with the same GPU checks found.
-  # - workers and maxMemorySize: 8 processes, each replaced once over 2048 MB, so that the report fits in ~16 GB, like
-  #   the reports of the other jobsets. With the skip, 8 x 2048 MB peaked at 15.2 GB in 25.8 s, as fast as one process
-  #   with all tests; 4 x 4096 MB at 15.8 GB in 33.0 s (and twice as long as one process on the Hydra host).
+  # With all tests, a report peaks at about twice the memory of one without (iets can't free what it has evaluated), so:
+  # - skipTests: the tests that allocate the most, none of which needs a GPU;
+  # - maxMemorySize: worker processes, each replaced once over 2048 MB, so that the report fits in about the memory of
+  #   the other jobsets' reports.
+  # nix-nixpkgs-review's README ("Cost") has the measurements.
   reports = map (
     system:
     nixNixpkgsReviewLib.mkReport {
@@ -73,13 +70,11 @@ let
       withCUDA = true;
       tests = true;
       skipTests = {
-        # .NET SDK tests (buildDotnetModule, ...): 1482 tests, a third of the tests' allocations (15.3 GB).
         dotnetCorePackages = true;
-        # 205 tests, the next most (6.3 GB).
         azure-cli-extensions = true;
       };
-      workers = 8;
       maxMemorySize = 2048;
+      apply = "drv: { requiredSystemFeatures = drv.requiredSystemFeatures or [ ]; }";
       nixpkgsArgs = nixpkgsArgsFile;
     }
   ) supportedSystems;
@@ -98,7 +93,7 @@ let
       jq --null-input --compact-output '
         [ inputs
           | select(.attrPath | any(. == "passthru"))
-          | select(.requiredSystemFeatures // [] | any(. == "cuda") and all(. != "rocm"))
+          | select(.extraValue.requiredSystemFeatures // [] | any(. == "cuda") and all(. != "rocm"))
           | .attrPath
           | index("passthru") as $i
           | .[:$i] + .[$i + 1:]

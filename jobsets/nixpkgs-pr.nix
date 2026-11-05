@@ -17,7 +17,6 @@
     # "aarch64-darwin"
   ],
   # The system evaluating this expression
-  # nixpkgs/ci doesn't work on non-Linux platform, so default to Linux while we use it
   currentSystem ? "x86_64-linux",
 
   # Merge commit includes changes in PR, should not trust this
@@ -28,8 +27,8 @@
 
   # https://github.com/ConnorBaker/nix-nixpkgs-review, which evaluates Nixpkgs and compares the results
   nixNixpkgsReview,
-  # The Nix evaluator nixNixpkgsReview's evaluations run with, built for `currentSystem` (a `build` input: the tools
-  # jobset's `iets.<system>`)
+  # The Nix evaluator nixNixpkgsReview's evaluations run with (a `build` input: the tools jobset's iets, for the system
+  # Hydra evaluates on)
   iets,
   ...
 }@args:
@@ -91,65 +90,31 @@ let
   # removed, broken and fixed.
   nixNixpkgsReviewLib = pkgs.callPackage "${nixNixpkgsReview}/lib.nix" { inherit iets; };
 
-  mkReport =
-    {
-      when,
-      tree,
-      system,
-      withCUDA,
-    }:
-    nixNixpkgsReviewLib.mkReport {
-      label = "${when}${lib.optionalString withCUDA "-cuda"}-${system}";
-      inherit tree withCUDA;
-      evalSystem = system;
-      # Evaluate Nixpkgs exactly as release-lib does for the jobs we build
-      nixpkgsArgs = nixpkgsArgsFile;
-    };
-
-  # The reports: target branch and merge commit; for each system, without and with cudaSupport. Each is its own
-  # derivation, depending only on its tree and settings, so the target branch's are shared by every PR (and push)
-  # with the same target branch commit.
-  reports =
-    lib.concatMap
-      (
-        { when, tree }:
-        lib.concatMap (
-          system:
-          map (
-            withCUDA:
-            let
-              spec = {
-                inherit
-                  when
-                  tree
-                  system
-                  withCUDA
-                  ;
-              };
-            in
-            spec // { report = mkReport spec; }
-          ) ([ false ] ++ lib.optional (supportsCuda system) true)
-        ) supportedSystems
-      )
-      [
-        {
-          when = "head";
-          tree = nixpkgs;
-        }
-        {
-          when = "merge";
-          tree = nixpkgsMerge;
-        }
-      ];
-
+  # The reports, per system: the target branch (head) and merge commit, without and with cudaSupport, e.g.
   # { x86_64-linux = { headNoCuda = <report>; headCuda = <report>; mergeNoCuda = <report>; mergeCuda = <report>; }; }
+  # Each is its own derivation, depending only on its tree and settings, so the target branch's are shared by every PR
+  # (and push) with the same target branch commit.
   reportsBySystem = lib.genAttrs supportedSystems (
     system:
-    lib.listToAttrs (
-      map (
-        spec: lib.nameValuePair (spec.when + (if spec.withCUDA then "Cuda" else "NoCuda")) spec.report
-      ) (lib.filter (spec: spec.system == system) reports)
-    )
+    let
+      mkReport =
+        when: tree: withCUDA:
+        nixNixpkgsReviewLib.mkReport {
+          label = "${when}${lib.optionalString withCUDA "-cuda"}-${system}";
+          inherit tree withCUDA;
+          evalSystem = system;
+          # Evaluate Nixpkgs exactly as release-lib does for the jobs we build
+          nixpkgsArgs = nixpkgsArgsFile;
+        };
+    in
+    {
+      headNoCuda = mkReport "head" nixpkgs false;
+      mergeNoCuda = mkReport "merge" nixpkgsMerge false;
+    }
+    // lib.optionalAttrs (supportsCuda system) {
+      headCuda = mkReport "head" nixpkgs true;
+      mergeCuda = mkReport "merge" nixpkgsMerge true;
+    }
   );
 
   # The diff of two reports (a file). Each also depends on every report, so that the first diff evaluation reads (as
@@ -160,7 +125,7 @@ let
     "${
       nixNixpkgsReviewLib.mkJobs {
         inherit pre post;
-        after = map (spec: spec.report) reports;
+        after = lib.concatMap lib.attrValues (lib.attrValues reportsBySystem);
       }
     }/diff.json";
 
@@ -188,34 +153,18 @@ let
       ''
     );
 
-  # jq functions: `builtOn`, whether Hydra builds the job at an attribute path (as JSON) for $system, as Nixpkgs'
-  # release.nix decides: unless its `meta.hydraPlatforms`, as a report has it, leaves the system out. $hydraPlatforms is
-  # from `hydraPlatformsOf`, of a report.
-  jqBuiltOn = ''
-    def hydraPlatformsOf: map(select(.hydraPlatforms) | { key: (.attrPath | tojson), value: .hydraPlatforms }) | from_entries;
-    def builtOn($hydraPlatforms; $system): $hydraPlatforms[.] | . == null or any(. == $system);
-  '';
-
   # Attribute paths of the jobs the PR adds, changes or fixes (that failed to evaluate before) without cudaSupport on a
-  # system, that Hydra builds for it, e.g. [ [ "blender" ] [ "zigPackages" "0.15" ] ].
+  # system, e.g. [ [ "blender" ] [ "zigPackages" "0.15" ] ].
   changedPackages =
     system:
-    query "pr-${system}"
-      {
-        pr = diffsBySystem.${system}.prNoCuda;
-        post = reportsBySystem.${system}.mergeNoCuda;
-      }
-      ''
-        ${jqBuiltOn}
-        ($post | hydraPlatformsOf) as $hydraPlatforms
-        | $pr[0] | .added + .changed + .fixed
-        | map(select(tojson | builtOn($hydraPlatforms; "${system}")))
-      '';
+    let
+      inherit (lib.importJSON diffsBySystem.${system}.prNoCuda) added changed fixed;
+    in
+    added ++ changed ++ fixed;
 
-  # Attribute paths added, changed or fixed by the PR with cudaSupport, that Hydra builds for the system, which are also
-  # either in one of the cudaPackages sets, only jobs with cudaSupport enabled, or affected by enabling cudaSupport. Only
-  # the attributes the PR changed are compared between the reports with and without cudaSupport, rather than diffing
-  # the reports in full.
+  # Attribute paths added, changed or fixed by the PR with cudaSupport, which are also either in one of the cudaPackages
+  # sets, only jobs with cudaSupport enabled, or affected by enabling cudaSupport. Only the attributes the PR changed are
+  # compared between the reports with and without cudaSupport, rather than diffing the reports in full.
   changedCudaPackages =
     system:
     let
@@ -230,11 +179,9 @@ let
       # outputsOf: the outputs of the jobs in a report whose attribute paths (as JSON) are in $want; a path that isn't a
       # job there (it's missing, or failed to evaluate) is null.
       ''
-        ${jqBuiltOn}
         def outputsOf($want):
           reduce (.[] | select($want[.attrPath | tojson])) as $l ({}; .[$l.attrPath | tojson] = $l.outputs);
-        ($cuda | hydraPlatformsOf) as $hydraPlatforms
-        | ($pr[0] | .added + .changed + .fixed | map(select(tojson | builtOn($hydraPlatforms; "${system}")))) as $paths
+        ($pr[0] | .added + .changed + .fixed) as $paths
         | ($paths | map({ key: tojson, value: true }) | from_entries) as $want
         | ($noCuda | outputsOf($want)) as $noCuda
         | ($cuda | outputsOf($want)) as $cuda
@@ -242,104 +189,28 @@ let
         | map(select((.[0] | startswith("cudaPackages")) or (tojson as $k | $noCuda[$k] != $cuda[$k])))
       '';
 
-  toEntries =
-    system:
-    map (path: {
-      inherit system path;
-    });
-
-  # Collect all paths that changed between these into a form of a list:
-  # [
-  #   {system = "x86_64-linux"; path = ["csxcad"];}
-  #   {system = "x86_64-linux"; path = ["ctranslate2"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libcublasmp"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libcudss"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libnvshmem"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "nsight_systems"];}
-  #   {system = "x86_64-linux"; path = ["cura-appimage"];}
-  #   ...
-  # ]
-  entriesCuda = lib.concatMap (
-    system: toEntries system (changedCudaPackages system)
-  ) supportedSystemsWithCuda;
-
-  # Packages added, changed or fixed by this PR without cudaSupport
-  entriesNoCuda = lib.concatMap (system: toEntries system (changedPackages system)) supportedSystems;
+  # The paths to build, with the system to build them for, e.g. [ { system = "x86_64-linux"; path = [ "csxcad" ]; } ].
+  entriesOf =
+    systems: changedOn:
+    lib.concatMap (system: map (path: { inherit system path; }) (changedOn system)) systems;
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
   ##########################################################
 
-  # First, we need to map it to:
-  #
-  # allPackagePlatforms = {
-  #   python3Packages.torch = [ "x86_64-linux" "aarch64-linux" ];
-  #   python3Packages.foo = [ "x86_64-linux" ];
-  #   python3Packages.bar = [ "aarch64-linux" ];
-  #   cool = [ "x86_64-linux" "aarch64-linux" ];
-  # }
-  #
-  # Then apply testOn and add cuda/nocuda suffixes to bring it to:
-  #
-  # prJobs = {
-  #   python3Packages.torch = { "x86_64-linux".cuda: <drv>; "aarch64-linux".cuda: <drv>; };
-  #   python3Packages.foo = { "x86_64-linux".nocuda: <drv>; };
-  #   python3Packages.bar = { "aarch64-linux".cuda: <drv>; };
-  #   cool = { "x86_64-linux".nocuda: <drv>; "aarch64-linux".nocuda: <drv>; };
-  # }
-  #
-  # thanks to some nix magic by @MattSturgeon (thanks!)
-
-  groupEntries =
-    entries:
-    lib.pipe entries [
-      (lib.groupBy (entry: lib.head entry.path))
-      (lib.mapAttrs (_: map (entry: entry // { path = lib.tail entry.path; })))
-    ];
-
-  entriesToAttrSet =
-    entries:
-    lib.mapAttrs (
-      _: entries:
-      let
-        byLeaf = lib.partition (entry: entry.path == [ ]) entries;
-      in
-      if byLeaf.wrong == [ ] then
-        # leaf node
-        lib.catAttrs "system" entries
-      else if byLeaf.right == [ ] then
-        # recursive
-        entriesToAttrSet entries
-      else
-        throw "Conflicting attr paths:${lib.concatMapStrings (entry: "\n- ${entry.path}") entries}"
-    ) (groupEntries entries);
-
-  # Like mapTestOn, only adds one more attrset layer, so that we can
-  # distinguish builds with and without CUDA support. Functions get no job: a report has the derivation a function
-  # returns when called with its defaults (e.g. `wrapOBS`), as nix-eval-jobs does, but Nixpkgs' release.nix makes no job
-  # of a function.
-  mapTestOnWithSuffix =
-    releaseLib: suffix:
-    let
-      inherit (releaseLib) forMatchingSystems hydraJob' pkgsFor;
-    in
-    lib.mapAttrsRecursive (
-      #path: metaPatterns: releaseLib.testOn metaPatterns (pkgs: lib.getAttrFromPath path pkgs)
-      path: metaPatterns:
-      forMatchingSystems metaPatterns (
-        system:
-        let
-          value = lib.getAttrFromPath path (pkgsFor system);
-        in
-        lib.optionalAttrs (!lib.isFunction value) {
-          ${suffix} = hydraJob' value;
-        }
-      )
-    );
-
-  prJobsCuda = mapTestOnWithSuffix releaseLibMergeCuda "cuda" (entriesToAttrSet entriesCuda);
-  prJobsNoCuda = mapTestOnWithSuffix releaseLibMergeNoCuda "nocuda" (entriesToAttrSet entriesNoCuda);
-  prJobs = lib.recursiveUpdate prJobsCuda prJobsNoCuda;
+  # The jobs, with a cuda or nocuda layer below the system, e.g.
+  # { python3Packages.torch = { x86_64-linux.cuda = <drv>; x86_64-linux.nocuda = <drv>; }; }
+  releaseJobs = releaseLib: import ./release-jobs.nix { inherit lib releaseLib; };
+  prJobs =
+    lib.recursiveUpdate
+      (releaseJobs releaseLibMergeCuda (job: { cuda = job; }) (
+        entriesOf supportedSystemsWithCuda changedCudaPackages
+      ))
+      (
+        releaseJobs releaseLibMergeNoCuda (job: { nocuda = job; }) (
+          entriesOf supportedSystems changedPackages
+        )
+      );
 
   # What the PR adds, changes, removes, breaks and fixes, with and without cudaSupport, shown as a report on the build's
   # page (and as JSON files).

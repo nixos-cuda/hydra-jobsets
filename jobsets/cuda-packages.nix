@@ -13,8 +13,8 @@
 
   # https://github.com/ConnorBaker/nix-nixpkgs-review, which evaluates Nixpkgs and compares the results
   nixNixpkgsReview,
-  # The Nix evaluator nixNixpkgsReview's evaluations run with, built for `currentSystem` (a `build` input: the tools
-  # jobset's `iets.<system>`)
+  # The Nix evaluator nixNixpkgsReview's evaluations run with (a `build` input: the tools jobset's iets, for the system
+  # Hydra evaluates on)
   iets,
   ...
 }@args:
@@ -73,107 +73,40 @@ let
     )
   );
 
-  # What enabling cudaSupport changes, per system (a file). Each diff also depends on every report, so that the first
-  # diff evaluation reads (as import-from-derivation) has Nix build all the reports at once, as many in parallel as
-  # Hydra's `--max-jobs` (`evaluator_max_jobs`) allows.
-  diffs = lib.mapAttrs (
-    system: systemReports:
-    "${
-      nixNixpkgsReviewLib.mkJobs {
-        pre = systemReports.noCuda;
-        post = systemReports.cuda;
-        after = lib.concatMap lib.attrValues (lib.attrValues reports);
-      }
-    }/diff.json"
-  ) reports;
-
   # The attribute paths added, changed, or fixed (that fail to evaluate without cudaSupport) by enabling cudaSupport on
-  # a system, that Hydra builds for it: as Nixpkgs' release.nix does, not those whose `meta.hydraPlatforms` (as the
-  # report with cudaSupport has it) leaves the system out. Read by jq, so evaluation only reads the (small) result.
-  toBuild =
+  # a system. Each diff also depends on every report, so that the first diff evaluation reads (as
+  # import-from-derivation) has Nix build all the reports at once, as many in parallel as Hydra's `--max-jobs`
+  # (`evaluator_max_jobs`) allows.
+  changedOn =
     system:
-    lib.importJSON (
-      pkgs.runCommand "cuda-packages-${system}" { nativeBuildInputs = [ pkgs.jq ]; } ''
-        jq --null-input --arg system ${system} \
-          --slurpfile diff ${diffs.${system}} --slurpfile post ${reports.${system}.cuda} '
-            ($post | map(select(.hydraPlatforms) | { key: (.attrPath | tojson), value: .hydraPlatforms }) | from_entries)
-              as $hydraPlatforms
-            | $diff[0] | .added + .changed + .fixed
-            | map(select(tojson as $k | $hydraPlatforms[$k] | . == null or any(. == $system)))
-          ' > "$out"
-      ''
-    );
-
-  # Collect all paths to build into a form of a list:
-  # [
-  #   {system = "x86_64-linux"; path = ["csxcad"];}
-  #   {system = "x86_64-linux"; path = ["ctranslate2"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libcublasmp"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libcudss"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libnvshmem"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "nsight_systems"];}
-  #   {system = "x86_64-linux"; path = ["cura-appimage"];}
-  #   ...
-  # ]
-  entries = lib.concatMap (
-    system: map (path: { inherit system path; }) (toBuild system)
-  ) supportedSystems;
+    let
+      inherit
+        (lib.importJSON "${
+          nixNixpkgsReviewLib.mkJobs {
+            pre = reports.${system}.noCuda;
+            post = reports.${system}.cuda;
+            after = lib.concatMap lib.attrValues (lib.attrValues reports);
+          }
+        }/diff.json")
+        added
+        changed
+        fixed
+        ;
+    in
+    added ++ changed ++ fixed;
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
   ##########################################################
 
-  # First, we need to map it to:
-  #
-  # allPackagePlatforms = {
-  #   python3Packages.torch = [ "x86_64-linux" "aarch64-linux" ];
-  #   python3Packages.foo = [ "x86_64-linux" ];
-  #   python3Packages.bar = [ "aarch64-linux" ];
-  #   cool = [ "x86_64-linux" "aarch64-linux" ];
-  # }
-  #
-  # thanks to some nix magic by @MattSturgeon (thanks!)
-
-  groupEntries =
-    entries:
-    lib.pipe entries [
-      (lib.groupBy (entry: lib.head entry.path))
-      (lib.mapAttrs (_: map (entry: entry // { path = lib.tail entry.path; })))
-    ];
-
-  entriesToAttrSet =
-    entries:
-    lib.mapAttrs (
-      _: entries:
-      let
-        byLeaf = lib.partition (entry: entry.path == [ ]) entries;
-      in
-      if byLeaf.wrong == [ ] then
-        # leaf node
-        lib.catAttrs "system" entries
-      else if byLeaf.right == [ ] then
-        # recursive
-        entriesToAttrSet entries
-      else
-        throw "Conflicting attr paths:${lib.concatMapStrings (entry: "\n- ${entry.path}") entries}"
-    ) (groupEntries entries);
-
-  allPackagePlatforms = entriesToAttrSet entries;
-
-  # release-lib's mapTestOn, without the functions: a report has the derivation a function returns when called with
-  # its defaults (e.g. `wrapOBS`), as nix-eval-jobs does, but Nixpkgs' release.nix makes no job of a function.
-  inherit (release-lib) forMatchingSystems hydraJob' pkgsFor;
-  jobs = lib.mapAttrsRecursive (
-    path: systems:
-    lib.filterAttrs (_: job: job != null) (
-      forMatchingSystems systems (
-        system:
-        let
-          value = lib.getAttrFromPath path (pkgsFor system);
-        in
-        if lib.isFunction value then null else hydraJob' value
-      )
-    )
-  ) allPackagePlatforms;
+  # e.g. { cudaPackages.cudnn.x86_64-linux = <drv>; python3Packages.torch.aarch64-linux = <drv>; }
+  jobs =
+    import ./release-jobs.nix
+      {
+        inherit lib;
+        releaseLib = release-lib;
+      }
+      (job: job)
+      (lib.concatMap (system: map (path: { inherit system path; }) (changedOn system)) supportedSystems);
 in
 jobs

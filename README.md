@@ -61,10 +61,17 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 ### CUDA channels
 
 - **jobsets:** `cuda-channel-{unstable,26.05}`
-- **definition file:** [./jobsets/cuda-channel.nix](./jobsets/cuda-packages.nix)
+- **definition file:** [./jobsets/cuda-channel/default.nix](./jobsets/cuda-channel/default.nix)
 - **Content:** Channel blockers listed in [./channel-blockers.nix](./channel-blockers.nix).
 - **Purpose:** Ensure that the given packages and tests build successfully before bumping the
   `nixos-*-cuda` channels.
+
+### Tools
+
+- **jobset:** `tools` (a flake jobset)
+- **Content:** [nix-nixpkgs-review](https://github.com/ConnorBaker/nix-nixpkgs-review)'s `hydraJobs`: builds of
+  [iets](https://github.com/numtide/iets), the Nix evaluator its reports run.
+- **Purpose:** The `iets` build input of the CUDA packages and GPU checks jobsets, and of the nixpkgs PR jobsets.
 
 
 ## Roadmap
