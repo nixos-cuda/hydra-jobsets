@@ -93,5 +93,20 @@ let
       };
     };
   };
+
+  # Builds iets, the Nix evaluator nixpkgs PR jobsets evaluate Nixpkgs with (through
+  # nix-nixpkgs-review; consumed as a `build` input, see the nixos-cuda/infra hydra-github-app
+  # template).
+  tools = defaults // {
+    description = "Tools used by other jobsets";
+    type = 1;
+    flake = "github:ConnorBaker/nix-nixpkgs-review";
+    inputs = { };
+  };
 in
 projects
+// {
+  nixos-cuda = projects.nixos-cuda // {
+    inherit tools;
+  };
+}
