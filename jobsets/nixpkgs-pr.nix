@@ -1,6 +1,6 @@
 # Jobset that will be triggered on every PR in Nixpkgs.
 # We receive 2 Nixpkgs variants: one from target branch (e.g. master), another from the result of merging PR into it.
-# We evaluate 4 versions of Nixpkgs (with nix-nixpkgs-review):
+# We evaluate 4 versions of Nixpkgs per system (with nix-nixpkgs-review):
 # - target branch with and without cudaSupport
 # - merge commit with and without cudaSupport
 # Then we build packages changed by this PR:
@@ -28,9 +28,9 @@
 
   # https://github.com/ConnorBaker/nix-nixpkgs-review, which evaluates Nixpkgs and compares the results
   nixNixpkgsReview,
-  # The Nix used by nixNixpkgsReview's evaluations, with Determinate Systems' parallel evaluator
-  # (a `build` input of the tools jobset)
-  evalNix,
+  # The Nix evaluator nixNixpkgsReview's evaluations run with, built for `currentSystem` (a `build` input: the tools
+  # jobset's `iets.<system>`)
+  iets,
   ...
 }@args:
 
@@ -43,7 +43,7 @@ let
   };
 
   # The arguments Nixpkgs is imported with, as a function of { withCUDA, ... }: the same file configures the jobs
-  # (through release-lib) and the reports (as mkReport.nix's `nixpkgsArgs`).
+  # (through release-lib) and the reports (as nix-nixpkgs-review's `nixpkgsArgs`).
   nixpkgsArgsFile = ./nixpkgs-pr-args.nix;
   nixpkgsArgsFor = withCUDA: import nixpkgsArgsFile { inherit withCUDA; };
 
@@ -85,9 +85,12 @@ let
   supportsCuda = lib.hasSuffix "-linux";
   supportedSystemsWithCuda = lib.filter supportsCuda supportedSystems;
 
-  # nixNixpkgsReview's mkReport.nix evaluates Nixpkgs in a derivation (import-from-derivation),
-  # recording the output path of every attribute without instantiating anything, and
-  # mkDiff.nix lists the attributes added, changed, or removed between two such reports.
+  # nixNixpkgsReview's mkReport evaluates Nixpkgs in a derivation (import-from-derivation) with iets' eval-jobs,
+  # recording the output paths of every job, and the error of every attribute that fails to evaluate, without
+  # instantiating anything. mkJobs compares two reports: its diff.json lists the attribute paths added, changed,
+  # removed, broken and fixed.
+  nixNixpkgsReviewLib = pkgs.callPackage "${nixNixpkgsReview}/lib.nix" { inherit iets; };
+
   mkReport =
     {
       when,
@@ -96,25 +99,18 @@ let
       withCUDA,
     }:
     after:
-    (pkgs.callPackage "${nixNixpkgsReview}/mkReport.nix" {
-      name = "report-${when}${lib.optionalString withCUDA "-cuda"}-${system}";
-      nixpkgs = tree;
+    nixNixpkgsReviewLib.mkReport {
+      label = "${when}${lib.optionalString withCUDA "-cuda"}-${system}";
+      inherit tree withCUDA after;
       evalSystem = system;
-      inherit withCUDA;
-      withCA = false;
       # Evaluate Nixpkgs exactly as release-lib does for the jobs we build
       nixpkgsArgs = nixpkgsArgsFile;
-      nix = evalNix.outPath;
-      # Reports are only compared with each other, so cheaper fingerprints of output paths do
-      fingerprintDerivations = true;
-    }).overrideAttrs
-      (lib.optionalAttrs (after != null) { inherit after; });
+    };
 
-  # Every report uses every core and ~24G of memory, so each one depends on the one before it and
-  # Nix builds them one at a time. Reports for the target branch come first, so they only depend on
-  # the target branch and are shared by every PR (and push) with the same target branch commit.
-  # In build order: target branch, then merge commit; for each system, without and then with
-  # cudaSupport.
+  # Every report uses 8 cores and tens of GB of memory, so each one depends on the one before it and Nix builds them
+  # one at a time. Reports for the target branch come first, so they only depend on the target branch and are shared
+  # by every PR (and push) with the same target branch commit. In build order: target branch, then merge commit; for
+  # each system, without and then with cudaSupport.
   reportSpecs =
     lib.concatMap
       (
@@ -161,16 +157,17 @@ let
     )
   );
 
-  # Each diff also depends on the last report, so that the first of them evaluation asks for (as
-  # import-from-derivation) has all the reports built one after the other, rather than the reports
-  # it doesn't need waiting for it and its queries to be built.
+  # The diff of two reports (a file). Each also depends on the last report, so that the first of them evaluation asks
+  # for (as import-from-derivation) has all the reports built one after the other, rather than the reports it doesn't
+  # need waiting for it and its queries to be built.
   mkDiff =
-    reportPre: reportPost:
-    (pkgs.callPackage "${nixNixpkgsReview}/mkDiff.nix" {
-      name = "diff-${reportPre.name}-${reportPost.name}";
-      inherit reportPre reportPost;
-    }).overrideAttrs
-      { after = (lib.last reports).report; };
+    pre: post:
+    "${
+      nixNixpkgsReviewLib.mkJobs {
+        inherit pre post;
+        after = (lib.last reports).report;
+      }
+    }/diff.json";
 
   diffsBySystem = lib.mapAttrs (
     system: reports:
@@ -184,8 +181,8 @@ let
     }
   ) reportsBySystem;
 
-  # Runs jq over reports and diffs (each available as `$<name>[0]`), so evaluator workers only read
-  # the (small) result.
+  # Runs jq over reports and diffs (each available as `$<name>`, an array of its JSON values: a diff is one value, a
+  # report one per line), so evaluator workers only read the (small) result.
   query =
     name: inputs: filter:
     lib.importJSON (
@@ -196,37 +193,40 @@ let
       ''
     );
 
-  # Attribute paths added or changed in a diff, e.g. [ [ "blender" ] [ "zigPackages" "0.15" ] ].
-  addedOrChanged =
+  # Attribute paths of the jobs a diff adds, changes or fixes (that failed to evaluate before), e.g.
+  # [ [ "blender" ] [ "zigPackages" "0.15" ] ].
+  toBuild =
     diff:
     let
-      inherit (lib.importJSON diff) added changed;
+      inherit (lib.importJSON diff) added changed fixed;
     in
-    added ++ changed;
+    added ++ changed ++ fixed;
 
-  # Attribute paths added or changed by the PR with cudaSupport, which are also either in one of the
-  # cudaPackages sets, only present with cudaSupport enabled, or affected by enabling cudaSupport.
-  # Only the attributes the PR changed are compared between the reports with and without cudaSupport,
-  # rather than diffing the reports in full.
+  # Attribute paths added, changed or fixed by the PR with cudaSupport, which are also either in one of the
+  # cudaPackages sets, only jobs with cudaSupport enabled, or affected by enabling cudaSupport. Only the attributes the
+  # PR changed are compared between the reports with and without cudaSupport, rather than diffing the reports in full.
   changedCudaPackages =
     system:
     let
-      diffs = diffsBySystem.${system};
       reports = reportsBySystem.${system};
     in
-    query "${diffs.prCuda.name}-cudaPackages"
+    query "pr-cuda-${system}-cudaPackages"
       {
-        pr = diffs.prCuda;
+        pr = diffsBySystem.${system}.prCuda;
         noCuda = reports.mergeNoCuda;
-        report = reports.mergeCuda;
+        cuda = reports.mergeCuda;
       }
-      # A path may not exist in the report without cudaSupport, or go through a derivation there.
+      # outputsOf: the outputs of the jobs in a report whose attribute paths (as JSON) are in $want; a path that isn't a
+      # job there (it's missing, or failed to evaluate) is null.
       ''
-        ($pr[0].added + $pr[0].changed)
-        | map(select(
-            (.[0] | startswith("cudaPackages"))
-            or (. as $p | ($noCuda[0] | try getpath($p) catch null) != ($report[0] | getpath($p)))
-          ))
+        def outputsOf($want):
+          reduce (.[] | select($want[.attrPath | tojson])) as $l ({}; .[$l.attrPath | tojson] = $l.outputs);
+        ($pr[0] | .added + .changed + .fixed) as $paths
+        | ($paths | map({ key: tojson, value: true }) | from_entries) as $want
+        | ($noCuda | outputsOf($want)) as $noCuda
+        | ($cuda | outputsOf($want)) as $cuda
+        | $paths
+        | map(select((.[0] | startswith("cudaPackages")) or (tojson as $k | $noCuda[$k] != $cuda[$k])))
       '';
 
   toEntries =
@@ -250,9 +250,9 @@ let
     system: toEntries system (changedCudaPackages system)
   ) supportedSystemsWithCuda;
 
-  # Packages added or changed by this PR without cudaSupport
+  # Packages added, changed or fixed by this PR without cudaSupport
   entriesNoCuda = lib.concatMap (
-    system: toEntries system (addedOrChanged diffsBySystem.${system}.prNoCuda)
+    system: toEntries system (toBuild diffsBySystem.${system}.prNoCuda)
   ) supportedSystems;
 
   ##########################################################
@@ -322,8 +322,8 @@ let
   prJobsNoCuda = mapTestOnWithSuffix releaseLibMergeNoCuda "nocuda" (entriesToAttrSet entriesNoCuda);
   prJobs = lib.recursiveUpdate prJobsCuda prJobsNoCuda;
 
-  # What the PR adds, changes, and removes, with and without cudaSupport, shown as a report on the
-  # build's page (and as JSON files).
+  # What the PR adds, changes, removes, breaks and fixes, with and without cudaSupport, shown as a report on the build's
+  # page (and as JSON files).
   prChanges =
     pkgs.runCommand "pr-changes" { nativeBuildInputs = [ pkgs.jq ]; }
       # bash
@@ -341,8 +341,8 @@ let
                   {
                     echo "== ${system}, ${label}"
                     jq --raw-output '
-                      "\(.added | length) added, \(.changed | length) changed, \(.removed | length) removed",
-                      (("added", "changed", "removed") as $k | select(.[$k] != []) | "\n\($k):", (.[$k][] | "  \(join("."))"))
+                      "\(.added | length) added, \(.changed | length) changed, \(.removed | length) removed, \(.broken | length) broken (no longer evaluate), \(.fixed | length) fixed (evaluate now)",
+                      (("added", "changed", "removed", "broken", "fixed") as $k | select(.[$k] != []) | "\n\($k):", (.[$k][] | "  \(join("."))"))
                     ' < ${diffs.${name}}
                     echo
                   } >> "$out/changes.txt"

@@ -1,6 +1,6 @@
 # The arguments the PR jobset (./nixpkgs-pr.nix) imports Nixpkgs with: for its jobs, through release-lib, and for
-# nix-nixpkgs-review's reports, whose evaluation imports this file as mkReport.nix's `nixpkgsArgs` (which is passed
-# `withCA` as well).
+# nix-nixpkgs-review's reports, whose evaluation imports this file as their `nixpkgsArgs` (which is passed `withCA` as
+# well).
 { withCUDA, ... }:
 let
   # Known vulnerabilities to allow for CI:
