@@ -1,9 +1,12 @@
 # Jobset that will be triggered on every PR in Nixpkgs.
 # We receive 2 Nixpkgs variants: one from target branch (e.g. master), another from the result of merging PR into it.
-# We evaluate 3 versions of Nixpkgs:
+# We evaluate 4 versions of Nixpkgs per system (with nix-nixpkgs-review):
 # - target branch with and without cudaSupport
-# - merge commit with cudaSupport
-# Then we collect only packages that are changed by this PR and are affected by enabling cudaSupport.
+# - merge commit with and without cudaSupport
+# Then we build packages changed by this PR:
+# - with cudaSupport, if they are in the cudaPackages set or affected by enabling cudaSupport
+# - without cudaSupport
+# The `pr-changes` job shows what the PR changed, with and without cudaSupport.
 # TODO:
 # - add all gpuChecks that are affected by the PR into this jobset
 {
@@ -14,7 +17,6 @@
     # "aarch64-darwin"
   ],
   # The system evaluating this expression
-  # nixpkgs/ci doesn't work on non-Linux platform, so default to Linux while we use it
   currentSystem ? "x86_64-linux",
 
   # Merge commit includes changes in PR, should not trust this
@@ -22,304 +24,159 @@
   # Head of the target branch, should be trusted
   nixpkgs,
   targetBranch ? "master",
+
+  # https://github.com/ConnorBaker/nix-nixpkgs-review, which evaluates Nixpkgs and compares the results
+  nixNixpkgsReview,
+  # The Nix evaluator nixNixpkgsReview's evaluations run with (a `build` input: the tools jobset's iets, for the system
+  # Hydra evaluates on)
+  iets,
   ...
 }@args:
 
 let
-  # Used for simple IFDs
-  pkgs = import nixpkgs {
-    system = currentSystem;
-    config = { };
-    overlays = [ ];
-  };
-
-  # Ignore these known vulnerabilities for CI:
-  # - tensorrt:
-  #   - [CVE-2026-24188](https://github.com/NixOS/nixpkgs/issues/522570): OOB write
-  # - vllm:
-  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-7972-pg2x-xr59 (CVE-2026-27893)
-  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-83vm-p52w-f9pw (CVE-2026-44223)
-  #   - https://github.com/vllm-project/vllm/security/advisories/GHSA-hpv8-x276-m59f (CVE-2026-44222)
-  # Can't use allowInsecurePredicate because Nixpkgs ci/eval needs the config to be serializable to JSON
-  patchInsecurePackages =
-    nixpkgsTree:
-    pkgs.runCommand "patch-nixpkgs" { } ''
-      cp -r ${nixpkgsTree} $out
-      substituteInPlace $out/pkgs/development/cuda-modules/packages/tensorrt.nix \
-        --replace-warn '"CVE-2026-24188: OOB write"' '''
-      substituteInPlace $out/pkgs/development/python-modules/vllm/default.nix \
-        --replace-warn '"CVE-2026-27893"' ''' \
-        --replace-warn '"CVE-2026-44223"' ''' \
-        --replace-warn '"CVE-2026-44222"' '''
-    '';
-  nixpkgs' = patchInsecurePackages nixpkgs;
-  nixpkgsMerge' = patchInsecurePackages nixpkgsMerge;
+  lib = import "${nixpkgs}/lib";
 
   ##########################################################
   # STEP 1: Initialize release-lib
   ##########################################################
 
-  lib = import "${nixpkgs'}/lib";
-
-  nixpkgsConfig = {
-    # TODO: why not simply "allowUnfree = true"?
-    # allowUnfreePredicate =
-    #   let
-    #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-    #   in
-    #   cudaLib.allowUnfreeCudaPredicate;
-    allowUnfree = true;
-    cudaSupport = true;
-    inHydra = true;
-
-    # Don't evaluate duplicate and/or deprecated attributes
-    allowAliases = false;
-  };
-
-  # Attributes passed to nixpkgs.
-  nixpkgsArgs = {
-    config = nixpkgsConfig;
-    __allowFileset = false;
-  };
-
-  # release-lib.nix provides tools to efficiently map jobs to the actual derivations (packages)
-  # it memoizes packages sets for each platform, so we need to have multiple instances
-  # for different configs, i.e. with and without CUDA support
-  # We use release-lib from the target branch to keep it more stable.
+  # release-lib memoizes the package sets for each system, so there is one per configuration (with and without CUDA),
+  # of the merge commit.
   mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
-  releaseLibMergeCuda = mkReleaseLib (
-    {
-      inherit supportedSystems nixpkgsArgs;
-      system = currentSystem;
-      packageSet = import nixpkgsMerge';
-    }
-    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
-  );
-  releaseLibMergeNoCuda = mkReleaseLib (
-    {
-      inherit supportedSystems;
-      nixpkgsArgs = nixpkgsArgs // {
-        config = nixpkgsArgs.config // {
-          cudaSupport = false;
-        };
-      };
-      system = currentSystem;
-      packageSet = import nixpkgsMerge';
-    }
-    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
-  );
+  releaseLibMerge =
+    withCUDA:
+    mkReleaseLib (
+      {
+        inherit supportedSystems;
+        nixpkgsArgs = import ./nixpkgs-pr-args.nix { inherit withCUDA; };
+        system = currentSystem;
+        packageSet = import nixpkgsMerge;
+      }
+      // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
+    );
+  releaseLibMergeCuda = releaseLibMerge true;
+  releaseLibMergeNoCuda = releaseLibMerge false;
 
   ##########################################################
-  # STEP 2: Compute the set of attrpaths in nixpkgs that are affected by switching cudaSupport from
-  # `false` to `true`
+  # STEP 2: The attribute paths the PR adds, changes or fixes, without and with cudaSupport
   ##########################################################
-
-  ciMerge = import "${nixpkgsMerge'}/ci" {
-    system = currentSystem;
-    nixpkgs = nixpkgsMerge';
-  };
-
-  ciHead = import "${nixpkgs'}/ci" {
-    system = currentSystem;
-    nixpkgs = nixpkgs';
-  };
 
   supportsCuda = lib.hasSuffix "-linux";
   supportedSystemsWithCuda = lib.filter supportsCuda supportedSystems;
 
-  # TODO: optimize the value of chunkSize for the hydra machine
-  baseline =
-    ci: withCuda:
-    (ci.eval {
-      extraNixpkgsConfig = if withCuda then nixpkgsConfig else nixpkgsConfig // { cudaSupport = false; };
-    }).baseline
-      { evalSystems = if withCuda then supportedSystemsWithCuda else supportedSystems; };
-
-  baselines = pkgs.linkFarm "baselines" {
-    headCuda = baseline ciHead true;
-    headNoCuda = baseline ciHead false;
-    mergeCuda = baseline ciMerge true;
-    mergeNoCuda = baseline ciMerge false;
+  # The target branch's reports (head) are shared by every PR with the same target branch commit.
+  reports = import ./reports.nix {
+    inherit
+      nixpkgs
+      nixNixpkgsReview
+      iets
+      currentSystem
+      ;
   };
-
-  # Taken from ci/eval/diff.nix
-  getAttrs =
-    dir: evalSystem:
+  inherit (reports) pkgs;
+  reportsOn =
+    system: withCUDA:
     let
-      raw = builtins.readFile "${dir}/${evalSystem}/paths.json";
-      # The file contains Nix paths; we need to ignore them for evaluation purposes,
-      # else there will be a "is not allowed to refer to a store path" error.
-      data = builtins.unsafeDiscardStringContext raw;
+      report = when: reports.report "${when}${lib.optionalString withCUDA "-cuda"}-${system}";
     in
-    builtins.fromJSON data;
+    {
+      head = report "head" nixpkgs system withCUDA;
+      merge = report "merge" nixpkgsMerge system withCUDA;
+    };
 
-  # Cache attrs for each package set + config + system
-  # { "x86_64-linux": { headCuda = ...; mergeCuda = ...; mergeNoCuda = ...; }; }
-  attrs = lib.genAttrs supportedSystems (
+  # What the PR changes, without and with cudaSupport, e.g. { x86_64-linux = { prNoCuda = <mkJobs>; prCuda = ...; }; }
+  prBySystem = lib.genAttrs supportedSystems (
     system:
-    lib.genAttrs (
-      [
-        "headNoCuda"
-        "mergeNoCuda"
-      ]
-      ++ lib.optionals (supportsCuda system) [
-        "headCuda"
-        "mergeCuda"
-      ]
-    ) (name: getAttrs "${baselines}/${name}" system)
+    let
+      pr = withCUDA: reports.compare (reportsOn system withCUDA).head (reportsOn system withCUDA).merge;
+    in
+    { prNoCuda = pr false; } // lib.optionalAttrs (supportsCuda system) { prCuda = pr true; }
   );
 
-  # Collect all paths that changed between these into a form of a list:
-  # [
-  #   {system = "x86_64-linux"; path = ["csxcad"];}
-  #   {system = "x86_64-linux"; path = ["ctranslate2"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libcublasmp"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libcudss"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "libnvshmem"];}
-  #   {system = "x86_64-linux"; path = ["cudaPackages" "nsight_systems"];}
-  #   {system = "x86_64-linux"; path = ["cura-appimage"];}
-  #   ...
-  # ]
+  changedPackages = system: reports.changed prBySystem.${system}.prNoCuda;
 
-  entriesCuda = lib.concatLists (
-    lib.forEach supportedSystemsWithCuda (
-      system:
-      let
-        inherit (attrs.${system})
-          headCuda
-          mergeCuda
-          mergeNoCuda
-          ;
-        predicate =
-          name:
-          # Package must be added or changed in this PR
-          (!(headCuda ? ${name}) || (mergeCuda.${name} != headCuda.${name}))
-          # And must be one of:
-          && (
-            # in one of cudaPackages sets
-            (lib.hasPrefix "cudaPackages" name)
-            # only present with cudaSupport enabled
-            || !(mergeNoCuda ? ${name})
-            # affected by enabling cudaSupport
-            || (mergeCuda.${name} != mergeNoCuda.${name})
-          );
-        filtered = lib.filter predicate (lib.attrNames mergeCuda);
-      in
-      # Cut out "release-checks"
-      lib.filter (e: e.path != [ ]) (
-        map (pathStr: {
-          inherit system;
-          path = lib.init (lib.splitString "." pathStr);
-        }) filtered
-      )
-    )
-  );
-
-  entriesNoCuda = lib.concatLists (
-    lib.forEach supportedSystems (
-      system:
-      let
-        inherit (attrs.${system})
-          headNoCuda
-          mergeNoCuda
-          ;
-        predicate =
-          name:
-          # Package must be added or changed in this PR
-          (!(headNoCuda ? ${name}) || (mergeNoCuda.${name} != headNoCuda.${name}));
-        filtered = lib.filter predicate (lib.attrNames mergeNoCuda);
-      in
-      # Cut out "release-checks"
-      lib.filter (e: e.path != [ ]) (
-        map (pathStr: {
-          inherit system;
-          path = lib.init (lib.splitString "." pathStr);
-        }) filtered
-      )
-    )
-  );
+  # What the PR changes with cudaSupport that is in a cudaPackages set, or that enabling cudaSupport changes in the
+  # merge commit (as the CUDA packages jobset finds them).
+  changedCudaPackages =
+    system:
+    let
+      sensitive = builtins.listToAttrs (
+        map (path: lib.nameValuePair (builtins.toJSON path) true) (
+          reports.cudaSensitive (reportsOn system false).merge (reportsOn system true).merge
+        )
+      );
+    in
+    lib.filter (
+      path: lib.hasPrefix "cudaPackages" (lib.head path) || sensitive ? ${builtins.toJSON path}
+    ) (reports.changed prBySystem.${system}.prCuda);
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
   ##########################################################
 
-  # First, we need to map it to:
-  #
-  # allPackagePlatforms = {
-  #   python3Packages.torch = [ "x86_64-linux" "aarch64-linux" ];
-  #   python3Packages.foo = [ "x86_64-linux" ];
-  #   python3Packages.bar = [ "aarch64-linux" ];
-  #   cool = [ "x86_64-linux" "aarch64-linux" ];
-  # }
-  #
-  # Then apply testOn and add cuda/nocuda suffixes to bring it to:
-  #
-  # prJobs = {
-  #   python3Packages.torch = { "x86_64-linux".cuda: <drv>; "aarch64-linux".cuda: <drv>; };
-  #   python3Packages.foo = { "x86_64-linux".nocuda: <drv>; };
-  #   python3Packages.bar = { "aarch64-linux".cuda: <drv>; };
-  #   cool = { "x86_64-linux".nocuda: <drv>; "aarch64-linux".nocuda: <drv>; };
-  # }
-  #
-  # thanks to some nix magic by @MattSturgeon (thanks!)
+  # The jobs, with a cuda or nocuda layer below the system, e.g.
+  # { python3Packages.torch = { x86_64-linux.cuda = <drv>; x86_64-linux.nocuda = <drv>; }; }
+  releaseJobs = releaseLib: import ./release-jobs.nix { inherit lib releaseLib; };
+  prJobs =
+    lib.recursiveUpdate
+      (releaseJobs releaseLibMergeCuda (job: {
+        cuda = job;
+      }) supportedSystemsWithCuda changedCudaPackages)
+      (releaseJobs releaseLibMergeNoCuda (job: { nocuda = job; }) supportedSystems changedPackages);
 
-  groupEntries =
-    entries:
-    lib.pipe entries [
-      (lib.groupBy (entry: lib.head entry.path))
-      (lib.mapAttrs (_: map (entry: entry // { path = lib.tail entry.path; })))
-    ];
-
-  entriesToAttrSet =
-    entries:
-    lib.mapAttrs (
-      _: entries:
-      let
-        byLeaf = lib.partition (entry: entry.path == [ ]) entries;
-      in
-      if byLeaf.wrong == [ ] then
-        # leaf node
-        lib.catAttrs "system" entries
-      else if byLeaf.right == [ ] then
-        # recursive
-        entriesToAttrSet entries
-      else
-        throw "Conflicting attr paths:${lib.concatMapStrings (entry: "\n- ${entry.path}") entries}"
-    ) (groupEntries entries);
-
-  # Like mapTestOn, only adds one more attrset layer, so that we can
-  # distinguish builds with and without CUDA support
-  mapTestOnWithSuffix =
-    releaseLib: suffix:
-    let
-      inherit (releaseLib) forMatchingSystems hydraJob' pkgsFor;
-    in
-    lib.mapAttrsRecursive (
-      #path: metaPatterns: releaseLib.testOn metaPatterns (pkgs: lib.getAttrFromPath path pkgs)
-      path: metaPatterns:
-      forMatchingSystems metaPatterns (system: {
-        ${suffix} = hydraJob' (lib.getAttrFromPath path (pkgsFor system));
-      })
-    );
-
-  prJobsCuda = mapTestOnWithSuffix releaseLibMergeCuda "cuda" (entriesToAttrSet entriesCuda);
-  prJobsNoCuda = mapTestOnWithSuffix releaseLibMergeNoCuda "nocuda" (entriesToAttrSet entriesNoCuda);
-  prJobs = lib.recursiveUpdate prJobsCuda prJobsNoCuda;
+  # What the PR adds, changes, removes, breaks and fixes, with and without cudaSupport, shown as a report on the build's
+  # page (and as JSON files).
+  prChanges =
+    pkgs.runCommand "pr-changes" { nativeBuildInputs = [ pkgs.jq ]; }
+      # bash
+      ''
+        mkdir -p "$out/nix-support"
+        ${lib.concatStrings (
+          lib.mapAttrsToList (
+            system: prs:
+            lib.concatMapStrings
+              (
+                { name, label }:
+                lib.optionalString (prs ? ${name}) ''
+                  install -Dm444 ${prs.${name}}/diff.json "$out/${system}/${name}.json"
+                  echo "file json $out/${system}/${name}.json" >> "$out/nix-support/hydra-build-products"
+                  {
+                    echo "== ${system}, ${label}"
+                    jq --raw-output '
+                      "\(.added | length) added, \(.changed | length) changed, \(.removed | length) removed, \(.broken | length) broken (no longer evaluate), \(.fixed | length) fixed (evaluate now)",
+                      (("added", "changed", "removed", "broken", "fixed") as $k | select(.[$k] != []) | "\n\($k):", (.[$k][] | "  \(join("."))"))
+                    ' < ${prs.${name}}/diff.json
+                    echo
+                  } >> "$out/changes.txt"
+                ''
+              )
+              [
+                {
+                  name = "prNoCuda";
+                  label = "without cudaSupport";
+                }
+                {
+                  name = "prCuda";
+                  label = "with cudaSupport";
+                }
+              ]
+          ) prBySystem
+        )}
+        echo "report changes $out changes.txt" >> "$out/nix-support/hydra-build-products"
+      '';
 
   branchToChannelMap = {
     master = "nixos-unstable-cuda";
     "release-26.05" = "nixos-26.05-cuda";
   };
   channelJobs = import ./cuda-channel/default.nix {
-    inherit currentSystem;
-    supportedSystems = supportedSystemsWithCuda;
-    nixpkgs = nixpkgsMerge';
+    nixpkgs = nixpkgsMerge;
     channelName = branchToChannelMap.${targetBranch};
+    # Same Nixpkgs and config as the PR's CUDA jobs, so evaluator workers share one CUDA package set
+    releaseLib = releaseLibMergeCuda;
   };
 
-  # Explicitly specified platforms take precedence over the platforms
-  # automatically inferred in autoPackagePlatforms
   jobs =
     if branchToChannelMap ? ${targetBranch} then lib.recursiveUpdate prJobs channelJobs else prJobs;
 in
-jobs
+jobs // { pr-changes = prChanges; }

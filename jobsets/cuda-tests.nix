@@ -10,6 +10,12 @@
 
   # The nixpkgs instance
   nixpkgs,
+
+  # https://github.com/ConnorBaker/nix-nixpkgs-review, which evaluates Nixpkgs and its tests
+  nixNixpkgsReview,
+  # The Nix evaluator nixNixpkgsReview's evaluations run with (a `build` input: the tools jobset's iets, for the system
+  # Hydra evaluates on)
+  iets,
   ...
 }@args:
 
@@ -21,186 +27,115 @@ let
   lib = import "${nixpkgs}/lib";
   mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
 
-  nixpkgsConfig = {
-    # TODO: why not simply "allowUnfree = true"?
-    # allowUnfreePredicate =
-    #   let
-    #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-    #   in
-    #   cudaLib.allowUnfreeCudaPredicate;
-    allowUnfree = true;
-    cudaSupport = true;
-    inHydra = true;
-
-    # Don't evaluate duplicate and/or deprecated attributes
-    allowAliases = false;
-  };
-
-  # Attributes passed to nixpkgs.
-  nixpkgsArgs = {
-    config = nixpkgsConfig;
-    __allowFileset = false;
-  };
-
   release-lib = mkReleaseLib (
     {
-      inherit supportedSystems nixpkgsArgs;
+      inherit supportedSystems;
+      nixpkgsArgs = import ./nixpkgs-args.nix { withCUDA = true; };
       system = currentSystem;
     }
     // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
   );
-  inherit (release-lib) linux;
 
-  processPackage =
-    package:
+  ##########################################################
+  # STEP 2: Find the GPU checks
+  ##########################################################
+
+  # Used for simple IFDs
+  pkgs = import nixpkgs {
+    system = currentSystem;
+    config = { };
+    overlays = [ ];
+  };
+
+  # mkReport evaluates Nixpkgs in a derivation (read with import-from-derivation), as one JSON line per job; mkJobs
+  # compares two (see nix-nixpkgs-review's lib.nix).
+  nixNixpkgsReviewLib = pkgs.callPackage "${nixNixpkgsReview}/lib.nix" { inherit iets; };
+
+  # Test discovery follows the documented Nixpkgs CUDA testing convention (doc/languages-frameworks/cuda.section.md):
+  # tests live in `passthru.tests` -- CUDA-specific ones nested, e.g. `tests.cuda.<name>` -- or are a `gpuCheck`, and
+  # carry `requiredSystemFeatures = [ "cuda" ]` so they only run on machines exposing a CUDA-capable GPU. Discovery is
+  # therefore capability-based: any such test is picked up, whatever it is named, but only within
+  # nix-nixpkgs-review's walk of the tests (`passthru.tests` up to three attribute sets deep, and no NixOS tests).
+  # Tests requiring `rocm` are skipped: they need an AMD GPU, which the CUDA builders do not have. A `gpuCheck` that
+  # fails to evaluate is a job too, so Hydra shows its error.
+  #
+  # With all tests, a report peaks at about twice the memory of one without (iets can't free what it has evaluated), so:
+  # - skipTests: the tests that allocate the most (by eval-jobs' per-job statistics); skipping them leaves out no test
+  #   with a `requiredSystemFeatures` of `cuda` (Nixpkgs ae2b13d55ef7);
+  # - maxMemorySize: worker processes, each replaced once over 2048 MB, so that the report fits in about the memory of
+  #   the other jobsets' reports.
+  #
+  # The tests' attribute paths, from each system's report, as Hydra names their jobs (without the report's `passthru`),
+  # with that system, e.g. { system = "x86_64-linux"; path = [ "blender" "tests" "tester-cudaAvailable" "gpuCheck" ]; }
+  # and { system = "x86_64-linux"; path = [ "cudaPackages" "saxpy" "gpuCheck" ]; }. The report is read by jq, so that
+  # evaluation only reads the (small) result.
+  gpuChecks = lib.concatMap (
+    system:
     let
-      passthruEval = builtins.tryEval (package.passthru or { });
-      pname = package.pname or "???";
-
-      # Test discovery follows the documented Nixpkgs CUDA testing convention
-      # (doc/languages-frameworks/cuda.section.md): tests live in
-      # `passthru.tests` -- CUDA-specific ones nested, e.g. `tests.cuda.<name>`
-      # -- and carry `requiredSystemFeatures = [ "cuda" ]` so they only run on
-      # machines exposing a CUDA-capable GPU. Discovery is therefore
-      # capability-based: any such test is picked up, whatever it is named.
-      # Tests requiring `rocm` are skipped: they need an AMD GPU, which the
-      # CUDA builders do not have.
-      requiresCuda =
-        value:
-        let
-          eval = builtins.tryEval (
-            let
-              features = value.requiredSystemFeatures or [ ];
-            in
-            builtins.elem "cuda" features && !(builtins.elem "rocm" features)
-          );
-        in
-        eval.success && eval.value;
-
-      # Map a `passthru.tests` subtree to a release-lib platform tree, lazily:
-      # the shape mirrors the tests attrset, with the platform list `linux` as
-      # the leaf wherever a test requires the CUDA system feature. Evaluating
-      # lazily matters: packages can sit close to Nix's call-depth limit
-      # (e.g. `tinygrad.tests.withCuda.gpuCheck` nests package overrides), and
-      # the old, lazy discovery survived there where an eager traversal
-      # overflows.
-      #
-      # Derivations expose their passthru attributes as derivation members, so
-      # a `writeGpuTestPython` tester placed at `tests.<name>` has its
-      # `gpuCheck` member visited like a nested attribute, yielding the
-      # historical `tests.<name>.gpuCheck` job paths. A `gpuCheck` member is
-      # then treated as a leaf: `passthru.tests` may contain package overrides
-      # (e.g. `tinygrad.tests.withCuda = tinygrad.override { ... }`) whose
-      # `gpuCheck` members lead back to more overrides, so re-descending those
-      # chains would force pathological (or even cyclic) passthru evaluation.
-      #
-      # Each node is guarded so one broken package does not fail the jobset.
-      testsTree =
-        value:
-        let
-          node = builtins.tryEval (
-            if lib.isDerivation value then
-              if value ? gpuCheck then
-                { gpuCheck = gpuCheckTree value.gpuCheck; }
-              else if requiresCuda value then
-                linux
-              else
-                { }
-            else if lib.isAttrs value then
-              # `passthru.tests` may contain non-attrset members (e.g. flags);
-              # the old discovery tolerated them via `? "gpuCheck"`.
-              lib.mapAttrs (_: testsTree) value
-            else
-              { }
-          );
-        in
-        if node.success then node.value else { };
-
-      gpuCheckTree =
-        value:
-        let
-          node = builtins.tryEval (if requiresCuda value then linux else { });
-        in
-        if node.success then node.value else { };
-
-      tests =
-        let
-          testsEval = builtins.tryEval (passthruEval.value.tests or { });
-        in
-        if testsEval.success then testsEval.value else { };
-
-      # The top-level `passthru.gpuCheck` convention, e.g. `writeGpuTestPython`'s
-      # default output shape (`cudaPackages.saxpy.gpuCheck`).
-      topGpuCheck =
-        let
-          node = builtins.tryEval (
-            if passthruEval.value ? gpuCheck && requiresCuda passthruEval.value.gpuCheck then
-              { gpuCheck = linux; }
-            else
-              { }
-          );
-        in
-        if node.success then node.value else { };
-
-      # e.g.
-      #   {
-      #     tests = { cuda = { pjrt = linux; } };
-      #     gpuCheck = linux;
-      #   }
-      # Tests keep the attr structure they are defined with, so job paths
-      # mirror the tests definitions; [ ] (no platforms) marks a package
-      # without any CUDA-requiring test.
-      testTree =
-        (lib.optionalAttrs (builtins.attrNames (testsTree tests) != [ ]) {
-          tests = testsTree tests;
-        })
-        // topGpuCheck;
+      report = nixNixpkgsReviewLib.mkReport {
+        label = "tests-cuda-${system}";
+        tree = nixpkgs;
+        evalSystem = system;
+        withCUDA = true;
+        tests = true;
+        skipTests = {
+          dotnetCorePackages = true;
+          azure-cli-extensions = true;
+        };
+        maxMemorySize = 2048;
+        apply = "drv: { requiredSystemFeatures = drv.requiredSystemFeatures or [ ]; }";
+        nixpkgsArgs = ./gpu-report-args.nix;
+      };
     in
-    if
-      !(builtins.elem pname [
-        # error: attribute 'cassandra_4' missing
-        "cassandra"
+    lib.importJSON (
+      pkgs.runCommand "gpu-checks-${system}" { nativeBuildInputs = [ pkgs.jq ]; } ''
+        jq --slurp --compact-output --arg system ${system} '
+          map(
+            select(.attrPath | any(. == "passthru"))
+            | select(
+                if .error then .attrPath[-1] == "gpuCheck"
+                else .extraValue.requiredSystemFeatures | any(. == "cuda") and all(. != "rocm") end
+              )
+            | { $system, path: (.attrPath | index("passthru") as $i | .[:$i] + .[$i + 1:]) }
+          )
+        ' ${report} > "$out"
+      ''
+    )
+  ) supportedSystems;
 
-        # {git,git-with-svn,git-minimal}.tests.withGitConfig fails to evaluate
-        # import ../../.. without system arg
-        "git"
-        "git-with-svn"
-        "git-minimal"
-      ])
-      && passthruEval.success
-    then
-      testTree
-    else
-      [ ];
+  ##########################################################
+  # STEP 3: Build the jobset that will be consumed by Hydra
+  ##########################################################
 
-  recursiveMapPackages' =
-    path: f:
-    lib.mapAttrs (
-      name: value:
-      # Ignore tests.fetchgit.withGitConfig as it fails to evaluate
-      if name == "withGitConfig" then
-        [ ]
-      else if lib.isDerivation value then
-        f value
-      else if value.recurseForDerivations or false || value.recurseForRelease or false then
-        recursiveMapPackages' (path ++ [ name ]) f value
-      else
-        [ ]
-    );
-
-  /*
-    {
-      xla.tests.cuda.pjrt = [ "x86_64-linux" "aarch64-linux" "riscv64-linux" ];
-      foo.tests.testName.gpuCheck = [ "x86_64-linux" "aarch64-linux" "riscv64-linux" ];
-    }
-  */
-  gpuChecksTree = recursiveMapPackages' [ ] processPackage release-lib.pkgs;
+  # The tests as a release-lib platform tree, e.g.
+  #   {
+  #     xla.tests.cuda.pjrt = [ "x86_64-linux" ];
+  #     foo.tests.testName.gpuCheck = [ "x86_64-linux" ];
+  #   }
+  # A path that is a prefix of another (a test that is a job and has a `gpuCheck`) can't be both a leaf and an attribute
+  # set: the job is dropped, and its `gpuCheck` kept.
+  toTree =
+    entries:
+    lib.mapAttrs
+      (
+        _: entries:
+        let
+          children = lib.filter (entry: entry.path != [ ]) entries;
+        in
+        if children == [ ] then lib.unique (lib.catAttrs "system" entries) else toTree children
+      )
+      (
+        # Not lib.groupBy', whose lazy fold overflows the stack for a large package set (e.g. python313Packages).
+        lib.mapAttrs (_: map (entry: entry // { path = lib.tail entry.path; })) (
+          builtins.groupBy (entry: lib.head entry.path) entries
+        )
+      );
 
   /*
     {
       foo.tests.testName.gpuCheck.x86_64-linux = <derivation>;
     }
   */
-  jobs = release-lib.mapTestOn gpuChecksTree;
+  jobs = release-lib.mapTestOn (toTree gpuChecks);
 in
 jobs

@@ -26,8 +26,9 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 - **jobsets:** `cuda-packages-{unstable,26.05}`
 - **definition file:** [./jobsets/cuda-packages.nix](./jobsets/cuda-packages.nix)
 - **Content:** All `cudaSupport`-sensitive nixpkgs packages (~2k packages).\
-  More specifically, we leverage
-  [nixpkgs' CI evaluation logic](https://github.com/NixOS/nixpkgs/tree/master/ci/eval)
+  More specifically, we evaluate nixpkgs with and without `cudaSupport` with
+  [nix-nixpkgs-review](https://github.com/ConnorBaker/nix-nixpkgs-review)
+  (each evaluation is a build, run with [iets](https://github.com/numtide/iets))
   to compute the set of packages whose hash changes when `cudaSupport` is enabled.
 - **Purpose:** Ensure packages build correctly with CUDA features enabled.\
   While distributing the build artifacts of some NVIDIA products is not allowed
@@ -45,6 +46,9 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
   Tests are discovered by their system features, whatever they are named:\
   nested under `passthru.tests` (e.g. `tests.cuda.<name>`, `tests.<name>.gpuCheck`)\
   or as a top-level `passthru.gpuCheck`.\
+  The tests are found by an evaluation of nixpkgs and its tests with
+  [nix-nixpkgs-review](https://github.com/ConnorBaker/nix-nixpkgs-review), run with
+  [iets](https://github.com/numtide/iets).\
   Tests requiring the `rocm` system feature are skipped: they need an AMD GPU.
 - **Purpose:** Ensure packages are properly tested on physical hardware.
   Simply building a package with `cudaSupport` does not guarantee correct
@@ -56,12 +60,18 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 
 ### CUDA channels
 
-- **jobsets:** `cuda-channel-{unstable,26.05}`
-- **definition file:** [./jobsets/cuda-channel.nix](./jobsets/cuda-packages.nix)
+- **jobsets:** `channel-{unstable,26.05}`
+- **definition file:** [./jobsets/cuda-channel/default.nix](./jobsets/cuda-channel/default.nix)
 - **Content:** Channel blockers listed in [./channel-blockers.nix](./channel-blockers.nix).
 - **Purpose:** Ensure that the given packages and tests build successfully before bumping the
   `nixos-*-cuda` channels.
 
+### Tools
+
+- **jobset:** `tools` (a flake jobset)
+- **Content:** [nix-nixpkgs-review](https://github.com/ConnorBaker/nix-nixpkgs-review)'s `hydraJobs`: builds of
+  [iets](https://github.com/numtide/iets), the Nix evaluator its reports run.
+- **Purpose:** The `iets` build input of the CUDA packages and GPU checks jobsets, and of the nixpkgs PR jobsets.
 
 ## Roadmap
 

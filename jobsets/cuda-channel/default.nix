@@ -13,6 +13,10 @@
 
   # "nixos-unstable-cuda", "nixos-26.05-cuda", ...
   channelName,
+
+  # An existing release-lib instance for `nixpkgs`, whose package sets are then shared: the PR jobset passes its CUDA
+  # jobs' (configured by ../nixpkgs-pr-args.nix, not ../nixpkgs-args.nix).
+  releaseLib ? null,
   ...
 }@args:
 
@@ -20,34 +24,18 @@ let
   lib = import "${nixpkgs}/lib";
   mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
 
-  nixpkgsConfig = {
-    # TODO: why not simply "allowUnfree = true"?
-    # allowUnfreePredicate =
-    #   let
-    #     cudaLib = (import "${nixpkgs}/pkgs/development/cuda-modules/_cuda").lib;
-    #   in
-    #   cudaLib.allowUnfreeCudaPredicate;
-    allowUnfree = true;
-    cudaSupport = true;
-    inHydra = true;
-
-    # Don't evaluate duplicate and/or deprecated attributes
-    allowAliases = false;
-  };
-
-  # Attributes passed to nixpkgs.
-  nixpkgsArgs = {
-    config = nixpkgsConfig;
-    __allowFileset = false;
-  };
-
-  release-lib = mkReleaseLib (
-    {
-      inherit supportedSystems nixpkgsArgs;
-      system = currentSystem;
-    }
-    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
-  );
+  release-lib =
+    if releaseLib != null then
+      releaseLib
+    else
+      mkReleaseLib (
+        {
+          inherit supportedSystems;
+          nixpkgsArgs = import ../nixpkgs-args.nix { withCUDA = true; };
+          system = currentSystem;
+        }
+        // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
+      );
 
   inherit (release-lib) pkgs;
   inherit (lib) concatStringsSep isDerivation;
