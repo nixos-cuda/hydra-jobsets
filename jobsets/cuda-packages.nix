@@ -37,43 +37,22 @@ let
   );
 
   ##########################################################
-  # STEP 2: Compute the set of attrpaths in nixpkgs that are affected by switching cudaSupport from
-  # `false` to `true`
+  # STEP 2: The attribute paths enabling cudaSupport adds, changes or fixes, per system
   ##########################################################
 
-  # Used for simple IFDs
-  pkgs = import nixpkgs {
-    system = currentSystem;
-    config = { };
-    overlays = [ ];
+  reports = import ./reports.nix {
+    inherit
+      nixpkgs
+      nixNixpkgsReview
+      iets
+      currentSystem
+      ;
   };
-
-  # mkReport evaluates Nixpkgs in a derivation (read with import-from-derivation), as one JSON line per job; mkJobs
-  # compares two (see nix-nixpkgs-review's lib.nix).
-  nixNixpkgsReviewLib = pkgs.callPackage "${nixNixpkgsReview}/lib.nix" { inherit iets; };
-
-  # The attribute paths added, changed, or fixed (that fail to evaluate without cudaSupport) by enabling cudaSupport on
-  # a system.
   changedOn =
     system:
-    let
-      mkReport =
-        withCUDA:
-        nixNixpkgsReviewLib.mkReport {
-          label = "${if withCUDA then "cuda" else "noCuda"}-${system}";
-          tree = nixpkgs;
-          evalSystem = system;
-          inherit withCUDA;
-          nixpkgsArgs = ./report-args.nix;
-          extraJobs = ./release-extra-jobs.nix;
-        };
-    in
-    lib.importJSON "${
-      nixNixpkgsReviewLib.mkJobs {
-        pre = mkReport false;
-        post = mkReport true;
-      }
-    }/changed.json";
+    reports.cudaSensitive (reports.report "noCuda-${system}" nixpkgs system false) (
+      reports.report "cuda-${system}" nixpkgs system true
+    );
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra

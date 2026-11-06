@@ -34,131 +34,81 @@
 }@args:
 
 let
-  # Used for simple IFDs
-  pkgs = import nixpkgs {
-    system = currentSystem;
-    config = { };
-    overlays = [ ];
-  };
+  lib = import "${nixpkgs}/lib";
 
   ##########################################################
   # STEP 1: Initialize release-lib
   ##########################################################
 
-  lib = import "${nixpkgs}/lib";
-
-  # release-lib.nix provides tools to efficiently map jobs to the actual derivations (packages)
-  # it memoizes packages sets for each platform, so we need to have multiple instances
-  # for different configs, i.e. with and without CUDA support
-  # We use release-lib from the target branch to keep it more stable.
+  # release-lib memoizes the package sets for each system, so there is one per configuration (with and without CUDA),
+  # of the merge commit.
   mkReleaseLib = import "${nixpkgs}/pkgs/top-level/release-lib.nix";
-  releaseLibMergeCuda = mkReleaseLib (
-    {
-      inherit supportedSystems;
-      nixpkgsArgs = import ./nixpkgs-pr-args.nix { withCUDA = true; };
-      system = currentSystem;
-      packageSet = import nixpkgsMerge;
-    }
-    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
-  );
-  releaseLibMergeNoCuda = mkReleaseLib (
-    {
-      inherit supportedSystems;
-      nixpkgsArgs = import ./nixpkgs-pr-args.nix { withCUDA = false; };
-      system = currentSystem;
-      packageSet = import nixpkgsMerge;
-    }
-    // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
-  );
+  releaseLibMerge =
+    withCUDA:
+    mkReleaseLib (
+      {
+        inherit supportedSystems;
+        nixpkgsArgs = import ./nixpkgs-pr-args.nix { inherit withCUDA; };
+        system = currentSystem;
+        packageSet = import nixpkgsMerge;
+      }
+      // lib.intersectAttrs (lib.functionArgs mkReleaseLib) args
+    );
+  releaseLibMergeCuda = releaseLibMerge true;
+  releaseLibMergeNoCuda = releaseLibMerge false;
 
   ##########################################################
-  # STEP 2: Compute the attribute paths the PR adds, changes or fixes, without and with cudaSupport
+  # STEP 2: The attribute paths the PR adds, changes or fixes, without and with cudaSupport
   ##########################################################
 
   supportsCuda = lib.hasSuffix "-linux";
   supportedSystemsWithCuda = lib.filter supportsCuda supportedSystems;
 
-  # mkReport evaluates Nixpkgs in a derivation (read with import-from-derivation), as one JSON line per job; mkJobs
-  # compares two (see nix-nixpkgs-review's lib.nix).
-  nixNixpkgsReviewLib = pkgs.callPackage "${nixNixpkgsReview}/lib.nix" { inherit iets; };
-
-  # The reports, per system: the target branch (head) and merge commit, without and with cudaSupport, e.g.
-  # { x86_64-linux = { headNoCuda = <report>; headCuda = <report>; mergeNoCuda = <report>; mergeCuda = <report>; }; }
-  # Each is its own derivation, depending only on its label, tree and settings, so the target branch's are shared by
-  # every PR (and push) with the same target branch commit.
-  reportsBySystem = lib.genAttrs supportedSystems (
-    system:
+  # The target branch's reports (head) are shared by every PR with the same target branch commit.
+  reports = import ./reports.nix {
+    inherit
+      nixpkgs
+      nixNixpkgsReview
+      iets
+      currentSystem
+      ;
+  };
+  inherit (reports) pkgs;
+  reportsOn =
+    system: withCUDA:
     let
-      mkReport =
-        when: tree: withCUDA:
-        nixNixpkgsReviewLib.mkReport {
-          label = "${when}${lib.optionalString withCUDA "-cuda"}-${system}";
-          inherit tree withCUDA;
-          evalSystem = system;
-          nixpkgsArgs = ./report-args.nix;
-          extraJobs = ./release-extra-jobs.nix;
-        };
+      report = when: reports.report "${when}${lib.optionalString withCUDA "-cuda"}-${system}";
     in
     {
-      headNoCuda = mkReport "head" nixpkgs false;
-      mergeNoCuda = mkReport "merge" nixpkgsMerge false;
-    }
-    // lib.optionalAttrs (supportsCuda system) {
-      headCuda = mkReport "head" nixpkgs true;
-      mergeCuda = mkReport "merge" nixpkgsMerge true;
-    }
+      head = report "head" nixpkgs system withCUDA;
+      merge = report "merge" nixpkgsMerge system withCUDA;
+    };
+
+  # What the PR changes, without and with cudaSupport, e.g. { x86_64-linux = { prNoCuda = <mkJobs>; prCuda = ...; }; }
+  prBySystem = lib.genAttrs supportedSystems (
+    system:
+    let
+      pr = withCUDA: reports.compare (reportsOn system withCUDA).head (reportsOn system withCUDA).merge;
+    in
+    { prNoCuda = pr false; } // lib.optionalAttrs (supportsCuda system) { prCuda = pr true; }
   );
 
-  # What the PR changes, without and with cudaSupport: mkJobs' output, with diff.json and changed.json.
-  prBySystem = lib.mapAttrs (
-    system: reports:
-    {
-      prNoCuda = nixNixpkgsReviewLib.mkJobs {
-        pre = reports.headNoCuda;
-        post = reports.mergeNoCuda;
-      };
-    }
-    // lib.optionalAttrs (supportsCuda system) {
-      prCuda = nixNixpkgsReviewLib.mkJobs {
-        pre = reports.headCuda;
-        post = reports.mergeCuda;
-      };
-    }
-  ) reportsBySystem;
+  changedPackages = system: reports.changed prBySystem.${system}.prNoCuda;
 
-  # Attribute paths of the jobs the PR adds, changes or fixes (that failed to evaluate before) without cudaSupport on a
-  # system, e.g. [ [ "blender" ] [ "zigPackages" "0.15" ] ].
-  changedPackages = system: lib.importJSON "${prBySystem.${system}.prNoCuda}/changed.json";
-
-  # Attribute paths the PR adds, changes or fixes with cudaSupport that are in a cudaPackages set or whose outputs
-  # cudaSupport changes (in the merge commit). Only the paths the PR changed are compared between the merge commit's
-  # reports without and with cudaSupport, rather than diffing the reports in full.
-  # jq reads the reports, so that evaluation only reads the (small) result. outputsOf: the outputs of the jobs in a report
-  # whose attribute paths (as JSON) are in $want; a path that isn't a job there (it's missing, or failed to evaluate) is
-  # null.
+  # What the PR changes with cudaSupport that is in a cudaPackages set, or that enabling cudaSupport changes in the
+  # merge commit (as the CUDA packages jobset finds them).
   changedCudaPackages =
     system:
     let
-      reports = reportsBySystem.${system};
+      sensitive = builtins.listToAttrs (
+        map (path: lib.nameValuePair (builtins.toJSON path) true) (
+          reports.cudaSensitive (reportsOn system false).merge (reportsOn system true).merge
+        )
+      );
     in
-    lib.importJSON (
-      pkgs.runCommand "pr-cuda-${system}-cudaPackages" { nativeBuildInputs = [ pkgs.jq ]; } ''
-        jq --null-input \
-          --slurpfile paths ${prBySystem.${system}.prCuda}/changed.json \
-          --slurpfile noCuda ${reports.mergeNoCuda} \
-          --slurpfile cuda ${reports.mergeCuda} \
-          '
-            def outputsOf($want):
-              reduce (.[] | select($want[.attrPath | tojson])) as $l ({}; .[$l.attrPath | tojson] = $l.outputs);
-            $paths[0] as $paths
-            | ($paths | map({ key: tojson, value: true }) | from_entries) as $want
-            | ($noCuda | outputsOf($want)) as $noCuda
-            | ($cuda | outputsOf($want)) as $cuda
-            | $paths
-            | map(select((.[0] | startswith("cudaPackages")) or (tojson as $k | $noCuda[$k] != $cuda[$k])))
-          ' > "$out"
-      ''
-    );
+    lib.filter (
+      path: lib.hasPrefix "cudaPackages" (lib.head path) || sensitive ? ${builtins.toJSON path}
+    ) (reports.changed prBySystem.${system}.prCuda);
 
   ##########################################################
   # STEP 3: Build the jobset that will be consumed by Hydra
