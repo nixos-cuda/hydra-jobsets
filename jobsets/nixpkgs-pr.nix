@@ -72,8 +72,7 @@ let
   );
 
   ##########################################################
-  # STEP 2: Compute the set of attrpaths in nixpkgs that are affected by switching cudaSupport from
-  # `false` to `true`
+  # STEP 2: Compute the attribute paths the PR adds, changes or fixes, without and with cudaSupport
   ##########################################################
 
   supportsCuda = lib.hasSuffix "-linux";
@@ -85,8 +84,8 @@ let
 
   # The reports, per system: the target branch (head) and merge commit, without and with cudaSupport, e.g.
   # { x86_64-linux = { headNoCuda = <report>; headCuda = <report>; mergeNoCuda = <report>; mergeCuda = <report>; }; }
-  # Each is its own derivation, depending only on its tree and settings, so the target branch's are shared by every PR
-  # (and push) with the same target branch commit.
+  # Each is its own derivation, depending only on its label, tree and settings, so the target branch's are shared by
+  # every PR (and push) with the same target branch commit.
   reportsBySystem = lib.genAttrs supportedSystems (
     system:
     let
@@ -131,9 +130,9 @@ let
   # system, e.g. [ [ "blender" ] [ "zigPackages" "0.15" ] ].
   changedPackages = system: lib.importJSON "${prBySystem.${system}.prNoCuda}/changed.json";
 
-  # Attribute paths added, changed or fixed by the PR with cudaSupport, which are also either in one of the cudaPackages
-  # sets, only jobs with cudaSupport enabled, or affected by enabling cudaSupport. Only the attributes the PR changed are
-  # compared between the reports with and without cudaSupport, rather than diffing the reports in full.
+  # Attribute paths the PR adds, changes or fixes with cudaSupport that are in a cudaPackages set or whose outputs
+  # cudaSupport changes (in the merge commit). Only the paths the PR changed are compared between the merge commit's
+  # reports without and with cudaSupport, rather than diffing the reports in full.
   # jq reads the reports, so that evaluation only reads the (small) result. outputsOf: the outputs of the jobs in a report
   # whose attribute paths (as JSON) are in $want; a path that isn't a job there (it's missing, or failed to evaluate) is
   # null.
@@ -227,8 +226,6 @@ let
     releaseLib = releaseLibMergeCuda;
   };
 
-  # Explicitly specified platforms take precedence over the platforms
-  # automatically inferred in autoPackagePlatforms
   jobs =
     if branchToChannelMap ? ${targetBranch} then lib.recursiveUpdate prJobs channelJobs else prJobs;
 in

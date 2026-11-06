@@ -11,7 +11,6 @@
 }:
 let
   inherit (releaseLib)
-    forMatchingSystems
     getPlatforms
     hydraJob'
     pkgs
@@ -67,7 +66,7 @@ lib.mapAttrsRecursive (
     valueOn = system: lib.getAttrFromPath path (pkgsFor system);
   in
   # Systems are chosen before the jobs are made, so that a job that fails to evaluate is an error of its own.
-  forMatchingSystems (lib.filter (system: isJob system (valueOn system)) systems) (
+  lib.genAttrs (lib.filter (system: isJob system (valueOn system)) systems) (
     system: wrap (hydraJob' (valueOn system))
   )
 ) (toTree (lib.concatMap (system: map (path: { inherit system path; }) (changedOn system)) systems))
