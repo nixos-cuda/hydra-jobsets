@@ -1,4 +1,8 @@
 let
+  onlyx86 = path: {
+    inherit path;
+    platforms = [ "x86_64-linux" ];
+  };
   common = [
     # cudaPackages
     "cudaPackages.cudatoolkit"
@@ -7,7 +11,7 @@ let
     "cudaPackages.libcusolvermp"
     "cudaPackages.nvbandwidth"
     "cudaPackages.saxpy"
-    "cudaPackages.saxpy.gpuCheck"
+    (onlyx86 "cudaPackages.saxpy.gpuCheck")
 
     # Other cudaPackages versions
     "cudaPackages_12.cudatoolkit"
@@ -21,13 +25,10 @@ let
 
     # Misc packages
     "blender"
-    "blender.tests.tester-cudaAvailable.gpuCheck"
+    (onlyx86 "blender.tests.tester-cudaAvailable.gpuCheck")
     "firefox-unwrapped" # depends on onnxruntime
-    {
-      path = "tiny-cuda-nn";
-      platforms = [ "x86_64-linux" ];
-    }
-    "python3Packages.nvidia-ml-py.tests.tester-nvmlInit.gpuCheck"
+    (onlyx86 "tiny-cuda-nn")
+    (onlyx86 "python3Packages.nvidia-ml-py.tests.tester-nvmlInit.gpuCheck")
 
     # ONNX
     "onnxruntime"
@@ -48,7 +49,7 @@ let
 
     # Python / CUDA
     "python3Packages.cuda-bindings"
-    "python3Packages.cuda-bindings.gpuCheck"
+    (onlyx86 "python3Packages.cuda-bindings.gpuCheck")
     "python3Packages.cuda-pathfinder"
 
     # Python / Misc
@@ -57,30 +58,24 @@ let
 
     # Python / Deep Learning
     "python3Packages.jax"
-    {
-      path = "python313Packages.tensorflow"; # tensorflow is not abailable on python 3.14
-      platforms = [ "x86_64-linux" ];
-    }
-    {
-      path = "python3Packages.tiny-cuda-nn";
-      platforms = [ "x86_64-linux" ];
-    }
+    (onlyx86 "python313Packages.tensorflow") # tensorflow is not abailable on python 3.14
+    (onlyx86 "python3Packages.tiny-cuda-nn")
     "python3Packages.tinygrad"
-    "python3Packages.tinygrad.gpuCheck"
-    "python3Packages.tinygrad.tests.withCuda.gpuCheck"
+    (onlyx86 "python3Packages.tinygrad.gpuCheck")
+    (onlyx86 "python3Packages.tinygrad.tests.withCuda.gpuCheck")
     # "xla": unavailable on CUDA 13.4 (among others)
 
     # PyTorch
     "python3Packages.torch"
-    "python3Packages.torch.tests.tester-compileCpu.gpuCheck"
-    "python3Packages.torch.tests.tester-compileCuda.gpuCheck"
-    "python3Packages.torch.tests.tester-cudaAvailable.gpuCheck"
+    (onlyx86 "python3Packages.torch.tests.tester-compileCpu.gpuCheck")
+    (onlyx86 "python3Packages.torch.tests.tester-compileCuda.gpuCheck")
+    (onlyx86 "python3Packages.torch.tests.tester-cudaAvailable.gpuCheck")
     "python3Packages.torchaudio"
-    "python3Packages.torchaudio.gpuCheck"
+    (onlyx86 "python3Packages.torchaudio.gpuCheck")
     "python3Packages.torchvision"
     "python3Packages.triton"
-    "python3Packages.triton-cuda.tests.axpy-cuda.gpuCheck"
-    "python3Packages.triton.gpuCheck"
+    (onlyx86 "python3Packages.triton-cuda.tests.axpy-cuda.gpuCheck")
+    (onlyx86 "python3Packages.triton.gpuCheck")
   ];
 in
 {
@@ -91,16 +86,16 @@ in
 
     # Python / CUDA
     "python3Packages.cuda-cccl"
-    "python3Packages.cuda-cccl.gpuCheck"
+    (onlyx86 "python3Packages.cuda-cccl.gpuCheck")
     "python3Packages.cuda-core"
-    "python3Packages.cuda-core.gpuCheck"
+    (onlyx86 "python3Packages.cuda-core.gpuCheck")
     "python3Packages.cuda-tile"
-    "python3Packages.cuda-tile.gpuCheck"
+    (onlyx86 "python3Packages.cuda-tile.gpuCheck")
     "python3Packages.nvidia-cutlass-dsl"
 
     # Python / Misc
     "python3Packages.numba-cuda"
-    "python3Packages.numba-cuda.gpuCheck"
+    (onlyx86 "python3Packages.numba-cuda.gpuCheck")
   ];
   "nixos-26.05-cuda" = common ++ [
     # Only adding it here as it is unavailable for CUDA 13.4
