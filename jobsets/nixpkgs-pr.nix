@@ -11,7 +11,7 @@
   supportedSystems ? [
     "x86_64-linux"
     "aarch64-linux"
-    # "aarch64-darwin"
+    "aarch64-darwin"
   ],
   # The system evaluating this expression
   # nixpkgs/ci doesn't work on non-Linux platform, so default to Linux while we use it
