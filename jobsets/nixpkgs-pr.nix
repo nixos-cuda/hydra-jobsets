@@ -309,6 +309,7 @@ let
   branchToChannelMap = {
     master = "nixos-unstable-cuda";
     "release-26.05" = "nixos-26.05-cuda";
+    "release-26.11" = "nixos-26.11-cuda";
   };
   channelJobs = import ./cuda-channel/default.nix {
     inherit currentSystem;

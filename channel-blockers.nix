@@ -97,6 +97,24 @@ in
     "python3Packages.numba-cuda"
     (onlyx86 "python3Packages.numba-cuda.gpuCheck")
   ];
+  "nixos-26.11-cuda" = common ++ [
+    # Other cudaPackages versions
+    "cudaPackages_13_3.cudatoolkit"
+    "cudaPackages_13_4.cudatoolkit"
+
+    # Python / CUDA
+    "python3Packages.cuda-cccl"
+    (onlyx86 "python3Packages.cuda-cccl.gpuCheck")
+    "python3Packages.cuda-core"
+    (onlyx86 "python3Packages.cuda-core.gpuCheck")
+    "python3Packages.cuda-tile"
+    (onlyx86 "python3Packages.cuda-tile.gpuCheck")
+    "python3Packages.nvidia-cutlass-dsl"
+
+    # Python / Misc
+    "python3Packages.numba-cuda"
+    (onlyx86 "python3Packages.numba-cuda.gpuCheck")
+  ];
   "nixos-26.05-cuda" = common ++ [
     # Only adding it here as it is unavailable for CUDA 13.4
     # TODO: re-enable when possible
