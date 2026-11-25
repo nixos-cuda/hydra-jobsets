@@ -7,7 +7,7 @@ This repository hosts the definitions of the jobsets running on the
 
 All jobsets come in both an _unstable_ and a _stable_ flavor.
 The corresponding upstream nixpkgs channels used are
-`nixos-unstable-small` and `nixos-26.05-small`, respectively.
+`nixos-unstable-small` and `nixos-26.11-small`, respectively.
 
 ## Declarative jobsets
 
@@ -23,7 +23,7 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 
 ### CUDA packages
 
-- **jobsets:** `cuda-packages-{unstable,26.05}`
+- **jobsets:** `cuda-packages-{unstable,26.11,26.05}`
 - **definition file:** [./jobsets/cuda-packages.nix](./jobsets/cuda-packages.nix)
 - **Content:** All `cudaSupport`-sensitive nixpkgs packages (~2k packages).\
   More specifically, we leverage
@@ -37,7 +37,7 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 
 ### CUDA GPU checks
 
-- **jobsets:** `cuda-gpu-checks-{unstable,26.05}`
+- **jobsets:** `cuda-gpu-checks-{unstable,26.11,26.05}`
 - **definition file:** [./jobsets/cuda-tests.nix](./jobsets/cuda-tests.nix)
 - **Content:** All passthru tests that require access to an NVIDIA GPU at build time.\
   This requirement is encoded as `requiredSystemFeatures = [ "cuda" ];`, per the\
@@ -56,7 +56,7 @@ The [`nixos-cuda` project](https://hydra.nixos-cuda.org/project/nixos-cuda) on H
 
 ### CUDA channels
 
-- **jobsets:** `cuda-channel-{unstable,26.05}`
+- **jobsets:** `cuda-channel-{unstable,26.11,26.05}`
 - **definition file:** [./jobsets/cuda-channel.nix](./jobsets/cuda-packages.nix)
 - **Content:** Channel blockers listed in [./channel-blockers.nix](./channel-blockers.nix).
 - **Purpose:** Ensure that the given packages and tests build successfully before bumping the
