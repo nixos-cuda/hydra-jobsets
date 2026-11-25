@@ -17,6 +17,19 @@ let
     "26.05" = "nixos-26.05-small";
   };
 
+  # What the jobsets that evaluate Nixpkgs with nix-nixpkgs-review take: its library, and iets, the evaluator its
+  # reports run, built by the `tools` jobset below for the system Hydra evaluates on.
+  nixNixpkgsReviewInputs = {
+    nixNixpkgsReview = {
+      type = "git";
+      value = "https://github.com/ConnorBaker/nix-nixpkgs-review";
+    };
+    iets = {
+      type = "build";
+      value = "nixos-cuda:tools:iets.x86_64-linux";
+    };
+  };
+
   mkJobset =
     {
       nixpkgsRelease,
@@ -47,17 +60,29 @@ let
     };
 
   projects = {
-    nixos-cuda = builtins.mapAttrs (_: mkJobset) {
+    nixos-cuda = {
+      # Builds iets, the Nix evaluator the jobsets evaluate Nixpkgs with (through nix-nixpkgs-review), as the `iets`
+      # build input of those above and of the nixpkgs PR jobsets (see the nixos-cuda/infra hydra-github-app template).
+      tools = defaults // {
+        description = "Tools used by other jobsets";
+        type = 1;
+        flake = "github:ConnorBaker/nix-nixpkgs-review";
+        inputs = { };
+      };
+    }
+    // builtins.mapAttrs (_: mkJobset) {
       # GPU CHECKS
       cuda-gpu-checks-unstable = {
         description = "Run GPU Tests";
         definitionFile = "cuda-tests.nix";
         nixpkgsRelease = "unstable";
+        extraInputs = nixNixpkgsReviewInputs;
       };
       "cuda-gpu-checks-26.05" = {
         description = "Run GPU Tests";
         definitionFile = "cuda-tests.nix";
         nixpkgsRelease = "26.05";
+        extraInputs = nixNixpkgsReviewInputs;
       };
 
       # PACKAGES
@@ -65,11 +90,13 @@ let
         description = "All nixpkgs cudaSupport-sensitive packages";
         definitionFile = "cuda-packages.nix";
         nixpkgsRelease = "unstable";
+        extraInputs = nixNixpkgsReviewInputs;
       };
       "cuda-packages-26.05" = {
         description = "All nixpkgs cudaSupport-sensitive packages";
         definitionFile = "cuda-packages.nix";
         nixpkgsRelease = "26.05";
+        extraInputs = nixNixpkgsReviewInputs;
       };
 
       # CHANNELS
